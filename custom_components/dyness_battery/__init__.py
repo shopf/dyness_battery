@@ -101,6 +101,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self.station_info = {}
         self.device_info = {}
         self.storage_info = {}
+        self.realtime_data = {}  # Cache für realTime/data (point_id → value)
 
     async def _async_update_data(self):
         async with aiohttp.ClientSession() as session:
@@ -196,6 +197,29 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     except Exception as e:
                         _LOGGER.warning("Dyness storage/list nicht erreichbar: %s", e)
 
+                    # realTime/data abrufen — liefert SOH, Temp, Zellspg, Zyklen
+                    try:
+                        rt_result = await _api_call(
+                            session, self.api_id, self.api_secret, self.api_base,
+                            "/v1/device/realTime/data",
+                            {"deviceSn": self.device_sn, "collectorSn": self.dongle_sn}
+                        )
+                        if str(rt_result.get("code", "")) in ("0", "200"):
+                            raw = rt_result.get("data", []) or []
+                            self.realtime_data = {
+                                item["pointId"]: item["pointValue"]
+                                for item in raw
+                                if isinstance(item, dict) and "pointId" in item
+                            }
+                            _LOGGER.debug("Dyness realTime/data: %d Punkte geladen", len(self.realtime_data))
+                        else:
+                            _LOGGER.warning(
+                                "Dyness realTime/data: Code %s – %s",
+                                rt_result.get("code"), rt_result.get("info")
+                            )
+                    except Exception as e:
+                        _LOGGER.warning("Dyness realTime/data nicht erreichbar: %s", e)
+
                     # Aktuelle Leistungsdaten abrufen (alle 5 Minuten)
                     result = await _api_call(
                         session, self.api_id, self.api_secret, self.api_base,
@@ -236,6 +260,35 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     data["deviceCommunicationStatus"] = self.device_info.get("deviceCommunicationStatus")
                     data["firmwareVersion"]            = self.device_info.get("firmwareVersion")
                     data["workStatus"]                 = self.storage_info.get("workStatus")
+
+                    # realTime/data Felder ergänzen
+                    # Gerätetyp anhand Point-IDs erkennen:
+                    # Junior Box → Point "800" = SOC (anderes Schema als Tower)
+                    # Tower      → Point "1400" = SOC
+                    rt = self.realtime_data
+                    if "800" in rt:
+                        # Junior Box Schema
+                        data["soh"]               = rt.get("1200")   # SOH %
+                        data["tempMax"]           = rt.get("1800")   # Höchste Temperatur °C
+                        data["tempMin"]           = rt.get("2000")   # Niedrigste Temperatur °C
+                        data["cellVoltageMax"]    = rt.get("1300")   # Höchste Zellspannung V
+                        data["cellVoltageMin"]    = rt.get("1500")   # Niedrigste Zellspannung V
+                        data["energyChargeDay"]   = rt.get("7200")   # Heute geladen kWh
+                        data["energyDischargeDay"]= rt.get("7400")   # Heute entladen kWh
+                        data["energyChargeTotal"] = rt.get("7100")   # Gesamt geladen kWh
+                        data["energyDischargeTotal"]= rt.get("7300") # Gesamt entladen kWh
+                    elif "1400" in rt:
+                        # Tower Schema
+                        data["soh"]               = rt.get("1500")   # SOH %
+                        data["tempMax"]           = rt.get("3000")   # Höchste Temperatur °C
+                        data["tempMin"]           = rt.get("3300")   # Niedrigste Temperatur °C
+                        data["cellVoltageMax"]    = rt.get("2400")   # Höchste Zellspannung V
+                        data["cellVoltageMin"]    = rt.get("2700")   # Niedrigste Zellspannung V
+                        data["cycleCount"]        = rt.get("1800")   # Zyklen
+                        data["energyChargeTotal"] = rt.get("1900")   # Kumuliert geladen kWh
+                        data["energyChargeDay"]   = None
+                        data["energyDischargeDay"]= None
+                        data["energyDischargeTotal"]= None
 
                     return data
 

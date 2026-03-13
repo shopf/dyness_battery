@@ -18,15 +18,18 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Gerät | Status |
 |-------|--------|
 | Dyness Junior Box | ✅ Getestet |
+| Dyness Tower (non-pro) | ✅ Sollte funktionieren (Community-getestet) |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
 
-> Andere Modelle können grundsätzlich funktionieren, da sie dieselbe Dyness Open API nutzen. Siehe Abschnitt [Neues Modell hinzufügen](#neues-modell-hinzufügen).
+> Die Integration erkennt den Gerätetyp automatisch anhand der API-Antwort und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
 
 ### Verfügbare Sensoren
 
+Die folgenden Sensoren sind für alle Geräte verfügbar:
+
 | Sensor | Beschreibung | Einheit |
 |--------|-------------|---------|
-| Ladestand | Aktueller SOC | % |
+| Ladestand (SOC) | Aktueller Ladestand | % |
 | Leistung | Lade-/Entladeleistung (+ = laden, − = entladen) | W |
 | Strom | Lade-/Entladestrom | A |
 | Batteriekapazität | Installierte Kapazität | kWh |
@@ -35,6 +38,21 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Verbindungsstatus | Online / Offline | – |
 | Betriebsstatus | z.B. RunMode, StandBy, Charging | – |
 | Firmware-Version | Aktuelle Firmware | – |
+
+Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten liefert:
+
+| Sensor | Beschreibung | Einheit | Junior Box | Tower |
+|--------|-------------|---------|:---:|:---:|
+| Batteriezustand (SOH) | State of Health | % | ✅ | ✅ |
+| Temperatur Max | Höchste Zellentemperatur | °C | ✅ | ✅ |
+| Temperatur Min | Niedrigste Zellentemperatur | °C | ✅ | ✅ |
+| Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ |
+| Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ |
+| Heute geladen | Geladene Energie heute | kWh | ✅ | – |
+| Heute entladen | Entladene Energie heute | kWh | ✅ | – |
+| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ |
+| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – |
+| Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ |
 
 ### Voraussetzungen
 
@@ -79,24 +97,21 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Batterie SN | Seriennummer mit `-BMS` | `R07ABCDEF123456-BMS` |
 | Dongle SN | Seriennummer ohne `-BMS` | `R07ABCDEF123456` |
 
-
 > **Hinweis zu Seriennummern:** Dies sind Beispiele. Seriennummern beginnen typischerweise mit `R07` gefolgt von 13 weiteren Zeichen. Die Dongle-SN ist 16 Zeichen lang, die Batterie-SN ist identisch mit dem Zusatz `-BMS` (insgesamt 20 Zeichen).
 
 ### Bekannte Einschränkungen
 
-- **Nur Monitoring** – Steuerung (Ladezeiten, SOC-Grenzen) wird von der Junior Box über die API nicht unterstützt
+- **Nur Monitoring** – Steuerung (Ladezeiten, SOC-Grenzen) wird von der API nicht unterstützt
 - **5-Minuten-Intervall** – Die API liefert Daten in 5-Minuten-Schritten
 - **Internetabhängig** – Keine lokale Verbindung (WiFi-Dongle ist intern verbaut)
-- **Spannung nicht verfügbar** – Wird von der Junior Box API nicht geliefert
 
 ### Neues Modell hinzufügen
 
 Du hast ein anderes Dyness-Modell mit WiFi-Dongle und möchtest es testen? Erstelle ein [Issue](https://github.com/shopf/dyness_battery/issues) mit folgenden Informationen:
 
-- Modellbezeichnung (z.B. `DL5.0C`)
+- Modellbezeichnung (z.B. `Tower T14`)
 - Seriennummer-Format (Batterie-SN und Dongle-SN)
 - Ausgabe des API-Testscripts (siehe unten)
-- Welche Felder Werte liefern und welche `null` sind
 
 **API-Testscript** – zum Testen welche Endpunkte dein Modell unterstützt:
 ```bash
@@ -114,13 +129,18 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 | Device | Status |
 |--------|--------|
 | Dyness Junior Box | ✅ Tested |
+| Dyness Tower (non-pro) | ✅ Should work (community-tested) |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
+
+> The integration automatically detects the device type from the API response and only registers sensors that are available for the specific device.
 
 ### Available Sensors
 
+The following sensors are available for all devices:
+
 | Sensor | Description | Unit |
 |--------|-------------|------|
-| State of Charge | Current SOC | % |
+| State of Charge (SOC) | Current battery level | % |
 | Power | Charge/discharge power (+ = charging, − = discharging) | W |
 | Current | Charge/discharge current | A |
 | Battery Capacity | Installed capacity | kWh |
@@ -129,6 +149,21 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 | Communication Status | Online / Offline | – |
 | Work Status | e.g. RunMode, StandBy, Charging | – |
 | Firmware Version | Current firmware version | – |
+
+Additional sensors are automatically enabled if the device provides the data:
+
+| Sensor | Description | Unit | Junior Box | Tower |
+|--------|-------------|------|:---:|:---:|
+| State of Health (SOH) | Battery health | % | ✅ | ✅ |
+| Temperature Max | Highest cell temperature | °C | ✅ | ✅ |
+| Temperature Min | Lowest cell temperature | °C | ✅ | ✅ |
+| Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ |
+| Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ |
+| Energy Charged Today | Energy charged today | kWh | ✅ | – |
+| Energy Discharged Today | Energy discharged today | kWh | ✅ | – |
+| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ |
+| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – |
+| Cycle Count | Number of charge cycles | – | – | ✅ |
 
 ### Step 1: Create API credentials in the Dyness Portal
 
@@ -169,24 +204,21 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 | Battery SN | Serial number with `-BMS` | `R07ABCDEF123456-BMS` |
 | Dongle SN | Serial number without `-BMS` | `R07ABCDEF123456` |
 
-
 > **Note on serial numbers:** These are examples. Serial numbers typically start with `R07` followed by 13 more characters. The dongle SN is 16 characters long, the battery SN is identical with the suffix `-BMS` added (20 characters total).
 
 ### Known Limitations
 
-- **Monitoring only** – Control (charge schedules, SOC limits) is not supported by the Junior Box API
+- **Monitoring only** – Control (charge schedules, SOC limits) is not supported via the API
 - **5-minute interval** – API provides data in 5-minute increments
 - **Cloud dependent** – No local connection (WiFi dongle is built-in)
-- **Voltage not available** – Not provided by the Junior Box API
 
 ### Adding a New Model
 
 Do you have a different Dyness model with a WiFi dongle and want to test it? Open an [Issue](https://github.com/shopf/dyness_battery/issues) with the following information:
 
-- Model name (e.g. `DL5.0C`)
+- Model name (e.g. `Tower T14`)
 - Serial number format (battery SN and dongle SN)
 - Output of the API test script (see `tools/dyness_test.py`)
-- Which fields return values and which return `null`
 
 ---
 
@@ -197,6 +229,7 @@ Uses the **Dyness Open API v1.1** with HmacSHA1 authentication.
 Endpoints used:
 - `POST /v1/device/bindSn` – Bind device to API key
 - `POST /v1/device/getLastPowerDataBySn` – Current power data (every 5 min)
+- `POST /v1/device/realTime/data` – Real-time BMS data: SOH, temperatures, cell voltages, energy totals (every 5 min)
 - `POST /v1/station/info` – Station info (capacity, installed power)
 - `POST /v1/device/household/storage/detail` – Device details (firmware, status)
 - `POST /v1/device/storage/list` – Work status (every 5 min)

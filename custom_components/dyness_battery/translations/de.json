@@ -25,9 +25,17 @@
       "firmware_version": {
         "name": "Firmware-Version"
       },
-      "work_status": {
-        "name": "Betriebsstatus"
-      }
+      "work_status": { "name": "Betriebsstatus" },
+      "battery_soh": { "name": "Batteriezustand (SOH)" },
+      "temp_max": { "name": "Temperatur Max" },
+      "temp_min": { "name": "Temperatur Min" },
+      "cell_voltage_max": { "name": "Zellspannung Max" },
+      "cell_voltage_min": { "name": "Zellspannung Min" },
+      "energy_charge_day": { "name": "Heute geladen" },
+      "energy_discharge_day": { "name": "Heute entladen" },
+      "energy_charge_total": { "name": "Gesamt geladen" },
+      "energy_discharge_total": { "name": "Gesamt entladen" },
+      "cycle_count": { "name": "Ladezyklen" }
     }
   }
 }
