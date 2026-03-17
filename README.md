@@ -18,43 +18,84 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Gerät | Status |
 |-------|--------|
 | Dyness Junior Box | ✅ Getestet |
+| Dyness DL5.0C (4 × DYNESS-Module, 20,48 kWh) | ✅ Vollständig getestet |
 | Dyness Tower (non-pro) | ✅ Sollte funktionieren (Community-getestet) |
-| Dyness DL5.0C | ✅ Sollte funktionieren (Community-getestet) |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
 
-> Die Integration erkennt den Gerätetyp automatisch anhand der API-Antwort und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
+> Die Integration erkennt Gerätetyp und Modulanzahl **vollautomatisch** – keine manuelle Konfiguration der Module erforderlich.
+
+### Funktionen v1.4.0
+
+- **Automatische Modulerkennung** – Die Anzahl der DYNESS-Module (2, 4, 6, …) wird bei jedem Start automatisch aus der BMS-Antwort ermittelt
+- **Korrekte Gesamtkapazität** – Die API meldet nur die Kapazität eines Moduls; die Integration multipliziert automatisch mit der tatsächlichen Modulanzahl
+- **Einzelzell-Spannungen** – Alle 16 Zellspannungen pro Modul abrufbar (standardmäßig deaktiviert, über HA-UI aktivierbar)
+- **Pro-Modul-Sensoren** – Jedes Modul erscheint als eigenes Untergerät in Home Assistant mit eigenem Satz an Sensoren
+- **Innenwiderstand** – Gemessener DC-Innenwiderstand pro Modul in mΩ
+- **Alarmstatus** – Alarm- und Schutzregister werden pro Modul überwacht
 
 ### Verfügbare Sensoren
 
-Die folgenden Sensoren sind für alle Geräte verfügbar:
+#### Pack-Ebene (BMS) – immer verfügbar
 
 | Sensor | Beschreibung | Einheit |
 |--------|-------------|---------|
 | Ladestand (SOC) | Aktueller Ladestand | % |
 | Leistung | Lade-/Entladeleistung (+ = laden, − = entladen) | W |
 | Strom | Lade-/Entladestrom | A |
+| Pack-Strom (BMS) | Batterie-Packstrom direkt vom BMS | A |
 | Letzte Aktualisierung | Zeitstempel der letzten Datenübertragung | – |
-| Batteriekapazität | Installierte Kapazität | kWh |
+| Batteriekapazität (pro Modul) | Kapazität eines einzelnen Moduls laut API | kWh |
+| **Gesamtkapazität Batterie** | Korrigierte Gesamtkapazität (× Modulanzahl) | kWh |
+| **Batteriestatus** | Laden / Entladen / Standby | – |
 | Verbindungsstatus | Online / Offline | – |
 | Betriebsstatus | z.B. RunMode, StandBy, Charging | – |
 | Firmware-Version | Aktuelle Firmware | – |
+| **Modulanzahl** | Automatisch erkannte Anzahl DYNESS-Module | – |
 
-Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten liefert:
+#### Pack-Ebene – geräteabhängig
 
-| Sensor | Beschreibung | Einheit | Junior Box | Tower |
-|--------|-------------|---------|:---:|:---:|
-| Pack-Spannung | Gesamtspannung des Akkupacks | V | ✅ | – |
-| Batteriezustand (SOH) | State of Health | % | ✅ | ✅ |
-| Temperatur Max | Höchste Zellentemperatur | °C | ✅ | ✅ |
-| Temperatur Min | Niedrigste Zellentemperatur | °C | ✅ | ✅ |
-| Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ |
-| Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ |
-| Zellspannungsdifferenz | Max − Min Zellspannung (Gesundheitsindikator) | V | ✅ | ✅ |
-| Heute geladen | Geladene Energie heute | kWh | ✅ | – |
-| Heute entladen | Entladene Energie heute | kWh | ✅ | – |
-| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ |
-| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – |
-| Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ |
+| Sensor | Beschreibung | Einheit | Junior Box | Tower | DL5.0C |
+|--------|-------------|---------|:---:|:---:|:---:|
+| Pack-Spannung | Gesamtspannung des Akkupacks | V | ✅ | – | ✅ |
+| Batteriezustand min. (SOH) | Niedrigster Modulzustand | % | ✅ | ✅ | ✅ |
+| Batteriezustand Ø (SOH) | Durchschnittlicher Modulzustand | % | ✅ | – | ✅ |
+| Temperatur Max | Höchste Zellentemperatur | °C | ✅ | ✅ | ✅ |
+| Temperatur Min | Niedrigste Zellentemperatur | °C | ✅ | ✅ | ✅ |
+| Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ | ✅ |
+| Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ | ✅ |
+| Zellspannungsdifferenz | Max − Min Zellspannung | V | ✅ | ✅ | ✅ |
+| **Zellspannungsdifferenz (mV)** | Max − Min Zellspannung in mV | mV | ✅ | ✅ | ✅ |
+| **Nutzbare Kapazität** | Gesamtkapazität × SOH | kWh | ✅ | ✅ | ✅ |
+| **Verbleibende Energie** | Nutzbare Kapazität × SOC | kWh | ✅ | ✅ | ✅ |
+| Heute geladen | Geladene Energie heute | kWh | ✅ | – | ✅ |
+| Heute entladen | Entladene Energie heute | kWh | ✅ | – | ✅ |
+| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ | ✅ |
+| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – | ✅ |
+| Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ | – |
+
+#### Pro-Modul-Sensoren (ein Untergerät pro DYNESS-Modul)
+
+Jedes Modul erscheint als eigenes Gerät in Home Assistant (verknüpft mit dem BMS als übergeordnetem Gerät).
+
+| Sensor | Beschreibung | Einheit |
+|--------|-------------|---------|
+| Batteriezustand (SOH) | State of Health dieses Moduls | % |
+| Ladezyklen | Ladezyklen dieses Moduls (variiert pro Modul) | – |
+| Zellspannung Max | Höchste Zellspannung im Modul | V |
+| Zellspannung Min | Niedrigste Zellspannung im Modul | V |
+| Zellspannungsdifferenz | Max − Min Zellspannung (Balancing-Indikator) | mV |
+| BMS-Platinentemperatur | Temperatur der BMS-Platine | °C |
+| Zelltemperatur 1 | NTC-Sensor 1 | °C |
+| Zelltemperatur 2 | NTC-Sensor 2 | °C |
+| Spannung | Modulspannung (= Packspannung, Parallelschaltung) | V |
+| Strom | Modulstrom (Summe × Modulanzahl ≈ Packstrom) | A |
+| Innenwiderstand | DC-Innenwiderstand des Moduls | mΩ |
+| Nennkapazität | Bewertete Kapazität (5,12 kWh / 100 Ah) | kWh |
+| Nutzbare Kapazität | Nennkapazität × SOH | kWh |
+| Alarmstatus | True wenn aktive Alarm- oder Schutzregister | – |
+| **Zelle 1–16 Spannung** | Einzelne Zellspannungen *(standardmäßig deaktiviert)* | V |
+
+> **Einzelzellspannungen aktivieren:** In Home Assistant unter *Einstellungen → Geräte & Dienste → Dyness Battery → [Modulname] → Entitäten* die gewünschten Zell-Sensoren aktivieren.
 
 ### Voraussetzungen
 
@@ -100,12 +141,15 @@ Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten 
 | Dongle SN | Seriennummer ohne `-BMS` | `R07ABCDEF123456` |
 
 > **Hinweis zu Seriennummern:** Dies sind Beispiele. Seriennummern beginnen typischerweise mit `R07` gefolgt von 13 weiteren Zeichen. Die Dongle-SN ist 16 Zeichen lang, die Batterie-SN ist identisch mit dem Zusatz `-BMS` (insgesamt 20 Zeichen).
+>
+> **Module werden automatisch erkannt** – es ist keine manuelle Eingabe von Modul-Seriennummern erforderlich.
 
 ### Bekannte Einschränkungen
 
 - **Nur Monitoring** – Steuerung (Ladezeiten, SOC-Grenzen) wird von der API nicht unterstützt
 - **5-Minuten-Intervall** – Die API liefert Daten in 5-Minuten-Schritten
 - **Internetabhängig** – Keine lokale Verbindung (WiFi-Dongle ist intern verbaut)
+- **station/info meldet Einzelmodul-Kapazität** – Die Integration korrigiert dies automatisch durch Multiplikation mit der erkannten Modulanzahl
 
 ### Neues Modell hinzufügen
 
@@ -131,43 +175,88 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 | Device | Status |
 |--------|--------|
 | Dyness Junior Box | ✅ Tested |
+| Dyness DL5.0C (4 × DYNESS modules, 20.48 kWh) | ✅ Fully tested |
 | Dyness Tower (non-pro) | ✅ Should work (community-tested) |
-| Dyness DL5.0C | ✅ Should work (community-tested) |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
 
-> The integration automatically detects the device type from the API response and only registers sensors that are available for the specific device.
+> The integration automatically detects the device type and module count — no manual module configuration required.
+
+### What's new in v1.4.0
+
+- **Automatic module discovery** — the number of DYNESS modules (2, 4, 6, …) is detected automatically from the BMS response on startup
+- **Corrected total capacity** — the API only reports one module's capacity; the integration multiplies by the discovered module count automatically
+- **Individual cell voltages** — all 16 cell voltages per module available (disabled by default, enable per entity in HA UI)
+- **Per-module sub-devices** — each module appears as its own device in Home Assistant with its own sensor set
+- **Internal resistance** — measured DC internal resistance per module in mΩ
+- **Alarm status** — alarm and protection registers monitored per module
 
 ### Available Sensors
 
-The following sensors are available for all devices:
+#### Pack level (BMS) — always available
 
 | Sensor | Description | Unit |
 |--------|-------------|------|
 | State of Charge (SOC) | Current battery level | % |
 | Power | Charge/discharge power (+ = charging, − = discharging) | W |
 | Current | Charge/discharge current | A |
+| Pack Current (BMS) | Battery pack current direct from BMS | A |
 | Last Update | Timestamp of last data transmission | – |
-| Battery Capacity | Installed capacity | kWh |
+| Battery Capacity (per module) | Single module capacity as reported by API | kWh |
+| **Total Battery Capacity** | Corrected total capacity (× module count) | kWh |
+| **Battery Status** | Charging / Discharging / Standby | – |
 | Communication Status | Online / Offline | – |
 | Work Status | e.g. RunMode, StandBy, Charging | – |
 | Firmware Version | Current firmware version | – |
+| **Module Count** | Auto-discovered number of DYNESS modules | – |
 
-Additional sensors are automatically enabled if the device provides the data:
+#### Pack level — device-dependent
 
-| Sensor | Description | Unit | Junior Box | Tower |
-|--------|-------------|------|:---:|:---:|
-| Pack Voltage | Total battery pack voltage | V | ✅ | – |
-| State of Health (SOH) | Battery health | % | ✅ | ✅ |
-| Temperature Max | Highest cell temperature | °C | ✅ | ✅ |
-| Temperature Min | Lowest cell temperature | °C | ✅ | ✅ |
-| Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ |
-| Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ |
-| Cell Voltage Spread | Max − Min cell voltage (health indicator) | V | ✅ | ✅ |
-| Energy Charged Today | Energy charged today | kWh | ✅ | – |
-| Energy Discharged Today | Energy discharged today | kWh | ✅ | – |
-| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ |
-| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – |
-| Cycle Count | Number of charge cycles | – | – | ✅ |
+| Sensor | Description | Unit | Junior Box | Tower | DL5.0C |
+|--------|-------------|------|:---:|:---:|:---:|
+| Pack Voltage | Total battery pack voltage | V | ✅ | – | ✅ |
+| State of Health min (SOH) | Lowest module health | % | ✅ | ✅ | ✅ |
+| State of Health avg (SOH) | Average module health | % | ✅ | – | ✅ |
+| Temperature Max | Highest cell temperature | °C | ✅ | ✅ | ✅ |
+| Temperature Min | Lowest cell temperature | °C | ✅ | ✅ | ✅ |
+| Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ | ✅ |
+| Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ | ✅ |
+| Cell Voltage Spread | Max − Min cell voltage | V | ✅ | ✅ | ✅ |
+| **Cell Voltage Spread (mV)** | Max − Min cell voltage in mV | mV | ✅ | ✅ | ✅ |
+| **Usable Capacity** | Total capacity × SOH | kWh | ✅ | ✅ | ✅ |
+| **Energy Remaining** | Usable capacity × SOC | kWh | ✅ | ✅ | ✅ |
+| Energy Charged Today | Energy charged today | kWh | ✅ | – | ✅ |
+| Energy Discharged Today | Energy discharged today | kWh | ✅ | – | ✅ |
+| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ | ✅ |
+| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – | ✅ |
+| Cycle Count | Number of charge cycles | – | – | ✅ | – |
+
+#### Per-module sensors (one sub-device per DYNESS module)
+
+Each module appears as its own device in Home Assistant, linked to the BMS as the parent device.
+
+| Sensor | Description | Unit |
+|--------|-------------|------|
+| State of Health (SOH) | Health of this specific module | % |
+| Cycle Count | Charge cycles for this module (varies per module) | – |
+| Cell Voltage Max | Highest cell voltage in module | V |
+| Cell Voltage Min | Lowest cell voltage in module | V |
+| Cell Voltage Spread | Max − Min cell voltage (balancing indicator) | mV |
+| BMS Board Temperature | BMS PCB temperature | °C |
+| Cell Temperature 1 | NTC sensor 1 | °C |
+| Cell Temperature 2 | NTC sensor 2 | °C |
+| Voltage | Module voltage (= pack voltage, parallel topology) | V |
+| Current | Module current (sum × module count ≈ pack current) | A |
+| Internal Resistance | DC internal resistance of the module | mΩ |
+| Rated Capacity | Nameplate capacity (5.12 kWh / 100 Ah) | kWh |
+| Usable Capacity | Rated capacity × SOH | kWh |
+| Alarm Status | True if any alarm or protection register is active | – |
+| **Cell 1–16 Voltage** | Individual cell voltages *(disabled by default)* | V |
+
+> **Enabling individual cell voltages:** In Home Assistant go to *Settings → Devices & Services → Dyness Battery → [module name] → Entities* and enable the desired cell sensors.
+
+### Prerequisites
+
+1. Dyness battery is already set up and online in the **Dyness app**
 
 ### Step 1: Create API credentials in the Dyness Portal
 
@@ -209,12 +298,15 @@ Additional sensors are automatically enabled if the device provides the data:
 | Dongle SN | Serial number without `-BMS` | `R07ABCDEF123456` |
 
 > **Note on serial numbers:** These are examples. Serial numbers typically start with `R07` followed by 13 more characters. The dongle SN is 16 characters long, the battery SN is identical with the suffix `-BMS` added (20 characters total).
+>
+> **Modules are auto-discovered** — no manual entry of module serial numbers is required.
 
 ### Known Limitations
 
 - **Monitoring only** – Control (charge schedules, SOC limits) is not supported via the API
 - **5-minute interval** – API provides data in 5-minute increments
 - **Cloud dependent** – No local connection (WiFi dongle is built-in)
+- **station/info reports single-module capacity** – The integration corrects this automatically by multiplying by the discovered module count
 
 ### Adding a New Model
 
@@ -230,13 +322,55 @@ Do you have a different Dyness model with a WiFi dongle and want to test it? Ope
 
 Uses the **Dyness Open API v1.1** with HmacSHA1 authentication.
 
-Endpoints used:
-- `POST /v1/device/bindSn` – Bind device to API key
-- `POST /v1/device/getLastPowerDataBySn` – Current power data (every 5 min)
-- `POST /v1/device/realTime/data` – Real-time BMS data: pack voltage, SOH, temperatures, cell voltages, energy totals, voltage spread (every 5 min)
-- `POST /v1/station/info` – Station info (battery capacity)
-- `POST /v1/device/household/storage/detail` – Device details (firmware, status)
-- `POST /v1/device/storage/list` – Work status (every 5 min)
+### Endpoints used
+
+| Endpoint | Purpose | Frequency |
+|----------|---------|-----------|
+| `POST /v1/device/bindSn` | Bind BMS and module SNs to API key | Once at startup |
+| `POST /v1/device/realTime/data` (BMS SN) | Pack voltage, SOH, temps, cell extremes, energy totals | Every 5 min |
+| `POST /v1/device/realTime/data` (module SN) | 131 points per module: all 16 cell voltages, temps, IR, health, alarms | Every 5 min |
+| `POST /v1/device/getLastPowerDataBySn` | SOC, power, current, timestamp | Every 5 min |
+| `POST /v1/device/storage/list` | Work status | Every 5 min |
+| `POST /v1/station/info` | Installed capacity (single-module value) | Once at startup |
+| `POST /v1/device/household/storage/detail` | Firmware version, communication status | Once at startup |
+
+### Device architecture (DL5.0C example)
+
+```
+BMS  (R07E…-BMS)
+├── DYNESS01  (R07E…-DYNESS01)  — 16 LFP cells in series, 5.12 kWh / 100 Ah
+├── DYNESS02  (R07E…-DYNESS02)  — 16 LFP cells in series, 5.12 kWh / 100 Ah
+├── DYNESS03  (R07E…-DYNESS03)  — 16 LFP cells in series, 5.12 kWh / 100 Ah
+└── DYNESS04  (R07E…-DYNESS04)  — 16 LFP cells in series, 5.12 kWh / 100 Ah
+                                   ─────────────────────────────────────────
+                                   Total: 16S4P · 20.48 kWh · 400 Ah @ 51.2 V
+```
+
+Module SNs are discovered automatically from the BMS `SUB` data point — the integration works for any number of parallel modules.
+
+### Module-level point IDs (all 131 decoded)
+
+Key confirmed point IDs for each DYNESS module:
+
+| Point ID | Field | Example value |
+|----------|-------|---------------|
+| 10000 | Serial number | `0106032501061890` |
+| 10100 | Firmware version | `24.9-26.8.1` |
+| 10300–11800 | Cell 1–16 voltage (V) | `3.350` |
+| 12400 | BMS board temperature (°C) | `32.2` |
+| 12500 / 12600 | Cell NTC temps 1 & 2 (°C) | `22.7` / `22.6` |
+| 13400 | Module current (A) | `-0.4` |
+| 13500 | Module voltage (V) | `53.58` |
+| 13600 | DC internal resistance (mΩ) | `33.464` |
+| 13700 | Module count in pack | `4` |
+| 13900 | Cycle count | `42` |
+| 14000 | State of Health (%) | `99.0` |
+| 14100 | Rated capacity (Ah) | `100.0` |
+| 14300 / 15200 | Alarm status bitmasks | `0` |
+| 16300 | Protection status bitmask | `0` |
+| 18100–19200 | Protection thresholds | `3.6 V`, `115 A`, `65 °C` |
+
+Cell voltage point ID formula: `pointId = 10300 + (cell_num − 1) × 100`
 
 ---
 
