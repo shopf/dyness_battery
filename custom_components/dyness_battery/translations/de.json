@@ -58,9 +58,29 @@
       "energy_discharge_total": {
         "name": "Gesamt entladen"
       },
-      "cycle_count": {
-        "name": "Ladezyklen"
-      }
+      "cycle_count": { "name": "Ladezyklen" },
+      "total_battery_capacity": { "name": "Gesamtkapazität Batterie" },
+      "battery_status": { "name": "Batteriestatus" },
+      "cell_voltage_diff_mv": { "name": "Zellspannungsdifferenz (mV)" },
+      "usable_kwh": { "name": "Nutzbare Kapazität" },
+      "remaining_kwh": { "name": "Verbleibende Energie" },
+      "avg_soh": { "name": "Batteriezustand Durchschnitt (SOH)" },
+      "pack_current": { "name": "Pack-Strom (BMS)" },
+      "module_count": { "name": "Modulanzahl" },
+      "module_soh": { "name": "Batteriezustand (SOH)" },
+      "module_cycle_count": { "name": "Ladezyklen" },
+      "module_cell_voltage_max": { "name": "Zellspannung Max" },
+      "module_cell_voltage_min": { "name": "Zellspannung Min" },
+      "module_cell_spread_mv": { "name": "Zellspannungsdifferenz" },
+      "module_temp_bms": { "name": "BMS-Platinentemperatur" },
+      "module_temp_1": { "name": "Zelltemperatur 1" },
+      "module_temp_2": { "name": "Zelltemperatur 2" },
+      "module_voltage": { "name": "Spannung" },
+      "module_current_a": { "name": "Strom" },
+      "module_internal_resistance": { "name": "Innenwiderstand" },
+      "module_rated_capacity": { "name": "Nennkapazität" },
+      "module_usable_capacity": { "name": "Nutzbare Kapazität" },
+      "module_alarm_status": { "name": "Alarmstatus" }
     }
   }
 }

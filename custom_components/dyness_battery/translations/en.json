@@ -1,66 +1,48 @@
 {
   "entity": {
     "sensor": {
-      "battery_soc": {
-        "name": "State of Charge"
-      },
-      "battery_power": {
-        "name": "Power"
-      },
-      "battery_current": {
-        "name": "Current"
-      },
-      "last_update": {
-        "name": "Last Update"
-      },
-      "battery_capacity": {
-        "name": "Battery Capacity"
-      },
-      "communication_status": {
-        "name": "Communication Status"
-      },
-      "firmware_version": {
-        "name": "Firmware Version"
-      },
-      "work_status": {
-        "name": "Work Status"
-      },
-      "pack_voltage": {
-        "name": "Pack Voltage"
-      },
-      "battery_soh": {
-        "name": "State of Health"
-      },
-      "temp_max": {
-        "name": "Temperature Max"
-      },
-      "temp_min": {
-        "name": "Temperature Min"
-      },
-      "cell_voltage_max": {
-        "name": "Cell Voltage Max"
-      },
-      "cell_voltage_min": {
-        "name": "Cell Voltage Min"
-      },
-      "cell_voltage_diff": {
-        "name": "Cell Voltage Spread"
-      },
-      "energy_charge_day": {
-        "name": "Energy Charged Today"
-      },
-      "energy_discharge_day": {
-        "name": "Energy Discharged Today"
-      },
-      "energy_charge_total": {
-        "name": "Energy Charged Total"
-      },
-      "energy_discharge_total": {
-        "name": "Energy Discharged Total"
-      },
-      "cycle_count": {
-        "name": "Cycle Count"
-      }
+      "battery_soc": { "name": "State of Charge" },
+      "battery_power": { "name": "Power" },
+      "battery_current": { "name": "Current" },
+      "last_update": { "name": "Last Update" },
+      "battery_capacity": { "name": "Battery Capacity (per module)" },
+      "communication_status": { "name": "Communication Status" },
+      "firmware_version": { "name": "Firmware Version" },
+      "work_status": { "name": "Work Status" },
+      "pack_voltage": { "name": "Pack Voltage" },
+      "battery_soh": { "name": "State of Health (min)" },
+      "temp_max": { "name": "Temperature Max" },
+      "temp_min": { "name": "Temperature Min" },
+      "cell_voltage_max": { "name": "Cell Voltage Max" },
+      "cell_voltage_min": { "name": "Cell Voltage Min" },
+      "cell_voltage_diff": { "name": "Cell Voltage Spread" },
+      "energy_charge_day": { "name": "Energy Charged Today" },
+      "energy_discharge_day": { "name": "Energy Discharged Today" },
+      "energy_charge_total": { "name": "Energy Charged Total" },
+      "energy_discharge_total": { "name": "Energy Discharged Total" },
+      "cycle_count": { "name": "Cycle Count" },
+      "total_battery_capacity": { "name": "Total Battery Capacity" },
+      "battery_status": { "name": "Battery Status" },
+      "cell_voltage_diff_mv": { "name": "Cell Voltage Spread (mV)" },
+      "usable_kwh": { "name": "Usable Capacity" },
+      "remaining_kwh": { "name": "Energy Remaining" },
+      "avg_soh": { "name": "State of Health (avg)" },
+      "pack_current": { "name": "Pack Current (BMS)" },
+      "module_count": { "name": "Module Count" },
+      "module_soh": { "name": "State of Health" },
+      "module_cycle_count": { "name": "Cycle Count" },
+      "module_cell_voltage_max": { "name": "Cell Voltage Max" },
+      "module_cell_voltage_min": { "name": "Cell Voltage Min" },
+      "module_cell_spread_mv": { "name": "Cell Voltage Spread" },
+      "module_temp_bms": { "name": "BMS Board Temperature" },
+      "module_temp_1": { "name": "Cell Temperature 1" },
+      "module_temp_2": { "name": "Cell Temperature 2" },
+      "module_voltage": { "name": "Voltage" },
+      "module_current_a": { "name": "Current" },
+      "module_internal_resistance": { "name": "Internal Resistance" },
+      "module_rated_capacity": { "name": "Rated Capacity" },
+      "module_usable_capacity": { "name": "Usable Capacity" },
+      "module_alarm_status": { "name": "Alarm Status" }
     }
   }
 }
