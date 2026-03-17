@@ -24,7 +24,7 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 
 > Die Integration erkennt Gerätetyp und Modulanzahl **vollautomatisch** – keine manuelle Konfiguration der Module erforderlich.
 
-### Funktionen v1.4.0
+### Neue Funktionen
 
 - **Automatische Modulerkennung** – Die Anzahl der DYNESS-Module (2, 4, 6, …) wird bei jedem Start automatisch aus der BMS-Antwort ermittelt
 - **Korrekte Gesamtkapazität** – Die API meldet nur die Kapazität eines Moduls; die Integration multipliziert automatisch mit der tatsächlichen Modulanzahl
@@ -181,7 +181,7 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 
 > The integration automatically detects the device type and module count — no manual module configuration required.
 
-### What's new in v1.4.0
+### What's new
 
 - **Automatic module discovery** — the number of DYNESS modules (2, 4, 6, …) is detected automatically from the BMS response on startup
 - **Corrected total capacity** — the API only reports one module's capacity; the integration multiplies by the discovered module count automatically
