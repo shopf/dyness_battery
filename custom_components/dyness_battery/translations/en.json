@@ -42,7 +42,9 @@
       "module_internal_resistance": { "name": "Internal Resistance" },
       "module_rated_capacity": { "name": "Rated Capacity" },
       "module_usable_capacity": { "name": "Usable Capacity" },
-      "module_alarm_status": { "name": "Alarm Status" }
+      "module_alarm_status": { "name": "Alarm Status" },
+      "api_status": { "name": "API Status" },
+      "api_call_count": { "name": "API Calls (session)" }
     }
   }
 }

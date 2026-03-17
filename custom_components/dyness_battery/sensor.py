@@ -41,6 +41,8 @@ PACK_SENSORS = [
     ("avgSoh",                 "avg_soh",               PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-heart-outline", None),
     ("packCurrentA",           "pack_current",          UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-dc",            None),
     ("moduleCount",            "module_count",          None,                         None,                          None,                              "mdi:counter",               None),
+    ("apiStatus",              "api_status",            None,                         None,                          None,                              "mdi:api",                   None),
+    ("apiCallCount",           "api_call_count",        None,                         None,                          SensorStateClass.TOTAL_INCREASING, "mdi:counter",               None),
 ]
 
 # Always register these keys even if value is None at startup
@@ -48,6 +50,7 @@ _ALWAYS_REGISTER = {
     "soc", "realTimePower", "realTimeCurrent", "createTime",
     "batteryCapacity", "deviceCommunicationStatus", "firmwareVersion", "workStatus",
     "totalBatteryCapacity", "batteryStatus", "moduleCount",
+    "apiStatus", "apiCallCount",
 }
 
 # ── Module-level sensors (created per discovered DYNESS sub-module) ───────────

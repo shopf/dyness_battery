@@ -80,7 +80,9 @@
       "module_internal_resistance": { "name": "Innenwiderstand" },
       "module_rated_capacity": { "name": "Nennkapazität" },
       "module_usable_capacity": { "name": "Nutzbare Kapazität" },
-      "module_alarm_status": { "name": "Alarmstatus" }
+      "module_alarm_status": { "name": "Alarmstatus" },
+      "api_status": { "name": "API-Status" },
+      "api_call_count": { "name": "API-Aufrufe (Sitzung)" }
     }
   }
 }

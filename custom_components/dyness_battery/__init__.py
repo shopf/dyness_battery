@@ -5,6 +5,7 @@ import hmac
 import base64
 import json
 import logging
+import time
 from email.utils import formatdate
 from datetime import timedelta
 
@@ -21,6 +22,11 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "dyness_battery"
 PLATFORMS = [Platform.SENSOR]
 SCAN_INTERVAL = timedelta(minutes=5)
+
+# ── API rate-limit settings ───────────────────────────────────────────────────
+_MIN_CALL_INTERVAL = 1.5   # minimum seconds between consecutive API calls
+_RATE_LIMIT_BACKOFF = 10   # initial wait (s) on HTTP 429; doubles each retry
+_MAX_RETRIES = 3            # max retry attempts on 429 or transient errors
 
 
 def _get_gmt_time() -> str:
@@ -57,14 +63,6 @@ def _build_headers(api_id: str, api_secret: str, body: str, sign_path: str) -> d
     }
 
 
-async def _api_call(session, api_id, api_secret, api_base, sign_path, body_dict):
-    url = f"{api_base}/openapi/ems-device{sign_path}"
-    body = json.dumps(body_dict, separators=(',', ':'))
-    headers = _build_headers(api_id, api_secret, body, sign_path)
-    async with session.post(url, headers=headers, data=body) as response:
-        raw_text = await response.text()
-        _LOGGER.debug("Dyness %s: %s", sign_path, raw_text)
-        return json.loads(raw_text)
 
 
 def _to_float(v):
@@ -224,6 +222,66 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self._module_sns: list[str] = []
         self._modules_bound: bool = False
 
+        # API telemetry
+        self._last_call_time: float = 0.0
+        self._api_call_count: int = 0
+        self._api_status: str = "ok"
+
+    async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict) -> dict:
+        """
+        Rate-paced API POST with exponential-backoff retry on HTTP 429.
+
+        - Enforces _MIN_CALL_INTERVAL between calls to avoid rate-limiting.
+        - On HTTP 429: waits _RATE_LIMIT_BACKOFF × 2^attempt seconds and retries.
+        - On transient connection errors: short back-off and retry.
+        - Updates self._api_status and self._api_call_count.
+        """
+        # Pace: sleep if we called the API too recently
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < _MIN_CALL_INTERVAL:
+            await asyncio.sleep(_MIN_CALL_INTERVAL - elapsed)
+
+        url = f"{self.api_base}/openapi/ems-device{path}"
+        body = json.dumps(body_dict, separators=(',', ':'))
+
+        for attempt in range(_MAX_RETRIES + 1):
+            self._last_call_time = time.monotonic()
+            self._api_call_count += 1
+            headers = _build_headers(self.api_id, self.api_secret, body, path)
+
+            try:
+                async with session.post(url, headers=headers, data=body) as response:
+                    if response.status == 429:
+                        wait = _RATE_LIMIT_BACKOFF * (2 ** attempt)
+                        _LOGGER.warning(
+                            "Dyness: rate limited (429) on %s — retry %d/%d in %ds",
+                            path, attempt + 1, _MAX_RETRIES, wait,
+                        )
+                        self._api_status = "rate_limited"
+                        if attempt < _MAX_RETRIES:
+                            await asyncio.sleep(wait)
+                            continue
+                        return {}
+
+                    raw_text = await response.text()
+                    _LOGGER.debug("Dyness %s: %s", path, raw_text)
+                    result = json.loads(raw_text)
+                    if self._api_status == "rate_limited":
+                        _LOGGER.info("Dyness: rate limit cleared, API responding normally")
+                    self._api_status = "ok"
+                    return result
+
+            except aiohttp.ClientError as e:
+                self._api_status = "offline"
+                _LOGGER.warning("Dyness %s connection error (attempt %d/%d): %s",
+                                path, attempt + 1, _MAX_RETRIES, e)
+                if attempt < _MAX_RETRIES:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+
+        return {}
+
     async def _async_update_data(self):
         async with aiohttp.ClientSession() as session:
             try:
@@ -233,9 +291,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     # ── Auto-discover BMS SN (once) ───────────────────────────
                     if not self.device_sn:
                         try:
-                            sl_result = await _api_call(
-                                session, self.api_id, self.api_secret, self.api_base,
-                                "/v1/device/storage/list", {}
+                            sl_result = await self._call(
+                                session, "/v1/device/storage/list", {}
                             )
                             if str(sl_result.get("code", "")) in ("0", "200"):
                                 device_list = (sl_result.get("data", {}) or {}).get("list", [])
@@ -261,9 +318,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     # ── Static data (loaded once at startup) ─────────────────
                     if not self.station_info:
                         try:
-                            result = await _api_call(
-                                session, self.api_id, self.api_secret, self.api_base,
-                                "/v1/station/info", {"deviceSn": self.device_sn}
+                            result = await self._call(
+                                session, "/v1/station/info", {"deviceSn": self.device_sn}
                             )
                             if str(result.get("code", "")) in ("0", "200"):
                                 self.station_info = result.get("data", {}) or {}
@@ -272,9 +328,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     if not self.device_info:
                         try:
-                            result = await _api_call(
-                                session, self.api_id, self.api_secret, self.api_base,
-                                "/v1/device/household/storage/detail",
+                            result = await self._call(
+                                session, "/v1/device/household/storage/detail",
                                 {"deviceSn": self.device_sn}
                             )
                             if str(result.get("code", "")) in ("0", "200"):
@@ -284,10 +339,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     # ── Work status (every update) ────────────────────────────
                     try:
-                        result = await _api_call(
-                            session, self.api_id, self.api_secret, self.api_base,
-                            "/v1/device/storage/list", {}
-                        )
+                        result = await self._call(session, "/v1/device/storage/list", {})
                         if str(result.get("code", "")) in ("0", "200"):
                             device_list = (result.get("data", {}) or {}).get("list", [])
                             match = next(
@@ -300,10 +352,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     # ── BMS realTime/data (every update) ─────────────────────
                     try:
-                        rt_result = await _api_call(
-                            session, self.api_id, self.api_secret, self.api_base,
-                            "/v1/device/realTime/data",
-                            {"deviceSn": self.device_sn}
+                        rt_result = await self._call(
+                            session, "/v1/device/realTime/data", {"deviceSn": self.device_sn}
                         )
                         if str(rt_result.get("code", "")) in ("0", "200"):
                             raw = rt_result.get("data", []) or []
@@ -357,10 +407,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     if self._module_sns and not self._modules_bound:
                         for sn in self._module_sns:
                             try:
-                                bind_r = await _api_call(
-                                    session, self.api_id, self.api_secret, self.api_base,
-                                    "/v1/device/bindSn",
-                                    {"deviceSn": sn}
+                                bind_r = await self._call(
+                                    session, "/v1/device/bindSn", {"deviceSn": sn}
                                 )
                                 _LOGGER.debug(
                                     "Dyness bindSn %s: code=%s", sn, bind_r.get("code")
@@ -370,15 +418,12 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         self._modules_bound = True
 
                     # ── Fetch per-module realTime/data ────────────────────────
+                    # Pacing is handled by self._call; no extra sleep needed.
                     module_data: dict = {}
-                    for i, sn in enumerate(self._module_sns):
-                        if i > 0:
-                            await asyncio.sleep(2)   # avoid 429 rate-limiting
+                    for sn in self._module_sns:
                         try:
-                            m_result = await _api_call(
-                                session, self.api_id, self.api_secret, self.api_base,
-                                "/v1/device/realTime/data",
-                                {"deviceSn": sn}
+                            m_result = await self._call(
+                                session, "/v1/device/realTime/data", {"deviceSn": sn}
                             )
                             if str(m_result.get("code", "")) in ("0", "200"):
                                 m_raw = m_result.get("data", []) or []
@@ -400,9 +445,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             _LOGGER.warning("Dyness module %s data failed: %s", sn, e)
 
                     # ── Power data (every update) — required ──────────────────
-                    result = await _api_call(
-                        session, self.api_id, self.api_secret, self.api_base,
-                        "/v1/device/getLastPowerDataBySn",
+                    result = await self._call(
+                        session, "/v1/device/getLastPowerDataBySn",
                         {"pageNo": 1, "pageSize": 1, "deviceSn": self.device_sn}
                     )
 
@@ -485,6 +529,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
                     except (ValueError, TypeError):
                         pass
+
+                    # ── API telemetry ─────────────────────────────────────────
+                    data["apiStatus"]    = self._api_status
+                    data["apiCallCount"] = self._api_call_count
 
                     # ── Module data and pack totals ───────────────────────────
                     n_modules = len(self._module_sns) or 1
