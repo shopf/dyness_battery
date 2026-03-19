@@ -25,6 +25,9 @@
       "work_status": {
         "name": "Work Status"
       },
+      "battery_status": {
+        "name": "Battery Status"
+      },
       "pack_voltage": {
         "name": "Pack Voltage"
       },
@@ -43,8 +46,14 @@
       "cell_voltage_min": {
         "name": "Cell Voltage Min"
       },
-      "cell_voltage_diff": {
+      "cell_voltage_diff_mv": {
         "name": "Cell Voltage Spread"
+      },
+      "charge_current_limit": {
+        "name": "Charge Current Limit"
+      },
+      "discharge_current_limit": {
+        "name": "Discharge Current Limit"
       },
       "energy_charge_day": {
         "name": "Energy Charged Today"
@@ -60,6 +69,12 @@
       },
       "cycle_count": {
         "name": "Cycle Count"
+      },
+      "usable_kwh": {
+        "name": "Usable Capacity"
+      },
+      "remaining_kwh": {
+        "name": "Energy Remaining"
       }
     }
   }

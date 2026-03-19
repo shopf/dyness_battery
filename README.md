@@ -22,7 +22,7 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Dyness DL5.0C | ✅ Sollte funktionieren (Community-getestet) |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
 
-> Die Integration erkennt den Gerätetyp automatisch anhand der API-Antwort und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
+> Die Integration erkennt das Gerät automatisch über die API und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
 
 ### Verfügbare Sensoren
 
@@ -33,28 +33,36 @@ Die folgenden Sensoren sind für alle Geräte verfügbar:
 | Ladestand (SOC) | Aktueller Ladestand | % |
 | Leistung | Lade-/Entladeleistung (+ = laden, − = entladen) | W |
 | Strom | Lade-/Entladestrom | A |
-| Letzte Aktualisierung | Zeitstempel der letzten Datenübertragung | – |
-| Batteriekapazität | Installierte Kapazität | kWh |
-| Verbindungsstatus | Online / Offline | – |
-| Betriebsstatus | z.B. RunMode, StandBy, Charging | – |
-| Firmware-Version | Aktuelle Firmware | – |
+| Batteriestatus | Charging / Discharging / Standby | – |
 
 Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten liefert:
 
-| Sensor | Beschreibung | Einheit | Junior Box | Tower |
-|--------|-------------|---------|:---:|:---:|
-| Pack-Spannung | Gesamtspannung des Akkupacks | V | ✅ | – |
-| Batteriezustand (SOH) | State of Health | % | ✅ | ✅ |
-| Temperatur Max | Höchste Zellentemperatur | °C | ✅ | ✅ |
-| Temperatur Min | Niedrigste Zellentemperatur | °C | ✅ | ✅ |
-| Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ |
-| Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ |
-| Zellspannungsdifferenz | Max − Min Zellspannung (Gesundheitsindikator) | V | ✅ | ✅ |
-| Heute geladen | Geladene Energie heute | kWh | ✅ | – |
-| Heute entladen | Entladene Energie heute | kWh | ✅ | – |
-| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ |
-| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – |
-| Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ |
+| Sensor | Beschreibung | Einheit | Junior Box | Tower | DL5.0C |
+|--------|-------------|---------|:---:|:---:|:---:|
+| Pack-Spannung | Gesamtspannung des Akkupacks | V | ✅ | – | ✅ |
+| Batteriezustand (SOH) | State of Health | % | ✅ | ✅ | ✅ |
+| Temperatur Max | Höchste Zellentemperatur | °C | ✅ | ✅ | ✅ |
+| Temperatur Min | Niedrigste Zellentemperatur | °C | ✅ | ✅ | ✅ |
+| Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ | ✅ |
+| Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ | ✅ |
+| Zellspannungsdifferenz | Max − Min Zellspannung (Gesundheitsindikator) | mV | ✅ | ✅ | ✅ |
+| Heute geladen | Geladene Energie heute | kWh | ✅ | – | ✅ |
+| Heute entladen | Entladene Energie heute | kWh | ✅ | – | ✅ |
+| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ | ✅ |
+| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – | ✅ |
+| Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ | – |
+| Nutzbare Kapazität | Kapazität × SOH | kWh | ✅ | ✅ | ✅ |
+| Verbleibende Energie | Nutzbare Kapazität × SOC | kWh | ✅ | ✅ | ✅ |
+
+Folgende Sensoren sind unter **Diagnose** auf der Geräteseite verfügbar:
+
+| Sensor | Beschreibung |
+|--------|-------------|
+| Letzte Aktualisierung | Zeitstempel der letzten Datenübertragung |
+| Batteriekapazität | Installierte Kapazität laut API |
+| Verbindungsstatus | Online / Offline |
+| Betriebsstatus | z.B. RunMode, StandBy, Charging |
+| Firmware-Version | Aktuelle Firmware |
 
 ### Voraussetzungen
 
@@ -67,8 +75,6 @@ Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten 
 3. Wähle im Menü links **Entwicklerzentrum** und dann **API-Verwaltung**
 4. Klicke auf **API Key erstellen**
 5. Notiere **App ID** und **App Secret** – das Secret wird nur einmal angezeigt!
-
-> **Seriennummern finden:** Wähle im Menü links **Kraftwerkszentrum** und dann **Geräteverwaltung**. Die Batterie-SN endet auf `-BMS`, die Dongle-SN ist dieselbe ohne `-BMS`.
 
 ### Installation
 
@@ -90,16 +96,14 @@ Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten 
 
 1. **Einstellungen** → **Geräte & Dienste** → **Integration hinzufügen**
 2. Nach **Dyness Battery** suchen
-3. Formular ausfüllen:
+3. Nur **API ID** und **API Secret** eintragen — das Gerät wird automatisch erkannt
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
 | API ID | Dyness API ID | `abc123xyz` |
 | API Secret | Dyness API Secret | `secretkey456` |
-| Batterie SN | Seriennummer mit `-BMS` | `R07ABCDEF123456-BMS` |
-| Dongle SN | Seriennummer ohne `-BMS` | `R07ABCDEF123456` |
 
-> **Hinweis zu Seriennummern:** Dies sind Beispiele. Seriennummern beginnen typischerweise mit `R07` gefolgt von 13 weiteren Zeichen. Die Dongle-SN ist 16 Zeichen lang, die Batterie-SN ist identisch mit dem Zusatz `-BMS` (insgesamt 20 Zeichen).
+> **Mehrere Batterien:** Bei mehreren Batterien auf einem Account wird automatisch die erste erkannte BMS verwendet. Für weitere Batterien einfach die Integration erneut hinzufügen — dieselben API-Zugangsdaten, das Gerät wird separat erkannt.
 
 ### Bekannte Einschränkungen
 
@@ -112,15 +116,7 @@ Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten 
 Du hast ein anderes Dyness-Modell mit WiFi-Dongle und möchtest es testen? Erstelle ein [Issue](https://github.com/shopf/dyness_battery/issues) mit folgenden Informationen:
 
 - Modellbezeichnung (z.B. `Tower T14`)
-- Seriennummer-Format (Batterie-SN und Dongle-SN)
-- Ausgabe des API-Testscripts (siehe unten)
-
-**API-Testscript** – zum Testen welche Endpunkte dein Modell unterstützt:
-```bash
-# Zugangsdaten eintragen und ausführen
-python3 dyness_test.py
-```
-Das Script findest du im Repository unter `tools/dyness_test.py`.
+- Ausgabe des API-Testscripts (siehe `tools/dyness_test.py`)
 
 ---
 
@@ -135,7 +131,7 @@ Das Script findest du im Repository unter `tools/dyness_test.py`.
 | Dyness DL5.0C | ✅ Should work (community-tested) |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
 
-> The integration automatically detects the device type from the API response and only registers sensors that are available for the specific device.
+> The integration automatically detects the device via the API and only registers sensors available for that specific device.
 
 ### Available Sensors
 
@@ -146,28 +142,36 @@ The following sensors are available for all devices:
 | State of Charge (SOC) | Current battery level | % |
 | Power | Charge/discharge power (+ = charging, − = discharging) | W |
 | Current | Charge/discharge current | A |
-| Last Update | Timestamp of last data transmission | – |
-| Battery Capacity | Installed capacity | kWh |
-| Communication Status | Online / Offline | – |
-| Work Status | e.g. RunMode, StandBy, Charging | – |
-| Firmware Version | Current firmware version | – |
+| Battery Status | Charging / Discharging / Standby | – |
 
 Additional sensors are automatically enabled if the device provides the data:
 
-| Sensor | Description | Unit | Junior Box | Tower |
-|--------|-------------|------|:---:|:---:|
-| Pack Voltage | Total battery pack voltage | V | ✅ | – |
-| State of Health (SOH) | Battery health | % | ✅ | ✅ |
-| Temperature Max | Highest cell temperature | °C | ✅ | ✅ |
-| Temperature Min | Lowest cell temperature | °C | ✅ | ✅ |
-| Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ |
-| Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ |
-| Cell Voltage Spread | Max − Min cell voltage (health indicator) | V | ✅ | ✅ |
-| Energy Charged Today | Energy charged today | kWh | ✅ | – |
-| Energy Discharged Today | Energy discharged today | kWh | ✅ | – |
-| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ |
-| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – |
-| Cycle Count | Number of charge cycles | – | – | ✅ |
+| Sensor | Description | Unit | Junior Box | Tower | DL5.0C |
+|--------|-------------|------|:---:|:---:|:---:|
+| Pack Voltage | Total battery pack voltage | V | ✅ | – | ✅ |
+| State of Health (SOH) | Battery health | % | ✅ | ✅ | ✅ |
+| Temperature Max | Highest cell temperature | °C | ✅ | ✅ | ✅ |
+| Temperature Min | Lowest cell temperature | °C | ✅ | ✅ | ✅ |
+| Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ | ✅ |
+| Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ | ✅ |
+| Cell Voltage Spread | Max − Min cell voltage (health indicator) | mV | ✅ | ✅ | ✅ |
+| Energy Charged Today | Energy charged today | kWh | ✅ | – | ✅ |
+| Energy Discharged Today | Energy discharged today | kWh | ✅ | – | ✅ |
+| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ | ✅ |
+| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – | ✅ |
+| Cycle Count | Number of charge cycles | – | – | ✅ | – |
+| Usable Capacity | Capacity × SOH | kWh | ✅ | ✅ | ✅ |
+| Energy Remaining | Usable capacity × SOC | kWh | ✅ | ✅ | ✅ |
+
+The following sensors are available under **Diagnostics** on the device page:
+
+| Sensor | Description |
+|--------|-------------|
+| Last Update | Timestamp of last data transmission |
+| Battery Capacity | Installed capacity per API |
+| Communication Status | Online / Offline |
+| Work Status | e.g. RunMode, StandBy, Charging |
+| Firmware Version | Current firmware version |
 
 ### Step 1: Create API credentials in the Dyness Portal
 
@@ -176,8 +180,6 @@ Additional sensors are automatically enabled if the device provides the data:
 3. Select **Developer Center** and then **API Management** from the left menu
 4. Click **Create API Key**
 5. Note down **App ID** and **App Secret** – the secret is only shown once!
-
-> **Finding serial numbers:** Select **Plants Center** and then **Device Management** from the left menu. The battery SN ends with `-BMS`, the dongle SN is the same without `-BMS`.
 
 ### Installation
 
@@ -199,16 +201,14 @@ Additional sensors are automatically enabled if the device provides the data:
 
 1. **Settings** → **Devices & Services** → **Add Integration**
 2. Search for **Dyness Battery**
-3. Fill in the form:
+3. Enter only your **API ID** and **API Secret** — the device is discovered automatically
 
 | Field | Description | Example |
 |-------|-------------|---------|
 | API ID | Your Dyness API ID | `abc123xyz` |
 | API Secret | Your Dyness API Secret | `secretkey456` |
-| Battery SN | Serial number with `-BMS` | `R07ABCDEF123456-BMS` |
-| Dongle SN | Serial number without `-BMS` | `R07ABCDEF123456` |
 
-> **Note on serial numbers:** These are examples. Serial numbers typically start with `R07` followed by 13 more characters. The dongle SN is 16 characters long, the battery SN is identical with the suffix `-BMS` added (20 characters total).
+> **Multiple batteries:** If you have multiple batteries on one account, the first detected BMS is used automatically. To add further batteries, simply add the integration again with the same credentials.
 
 ### Known Limitations
 
@@ -221,7 +221,6 @@ Additional sensors are automatically enabled if the device provides the data:
 Do you have a different Dyness model with a WiFi dongle and want to test it? Open an [Issue](https://github.com/shopf/dyness_battery/issues) with the following information:
 
 - Model name (e.g. `Tower T14`)
-- Serial number format (battery SN and dongle SN)
 - Output of the API test script (see `tools/dyness_test.py`)
 
 ---
@@ -231,6 +230,7 @@ Do you have a different Dyness model with a WiFi dongle and want to test it? Ope
 Uses the **Dyness Open API v1.1** with HmacSHA1 authentication.
 
 Endpoints used:
+- `POST /v1/device/storage/list` – Auto-discover device SN
 - `POST /v1/device/bindSn` – Bind device to API key
 - `POST /v1/device/getLastPowerDataBySn` – Current power data (every 5 min)
 - `POST /v1/device/realTime/data` – Real-time BMS data: pack voltage, SOH, temperatures, cell voltages, energy totals, voltage spread (every 5 min)

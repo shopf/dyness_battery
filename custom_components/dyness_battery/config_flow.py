@@ -9,8 +9,6 @@ from . import DOMAIN
 STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Required("api_id"): str,
     vol.Required("api_secret"): str,
-    vol.Required("device_sn"): str,
-    vol.Required("dongle_sn"): str,
 })
 
 
@@ -23,12 +21,11 @@ class DynessConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # api_base wird nicht mehr vom User eingegeben
             user_input["api_base"] = "https://open-api.dyness.com"
-            await self.async_set_unique_id(user_input["device_sn"])
+            await self.async_set_unique_id(user_input["api_id"])
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title=f"Dyness Battery ({user_input['device_sn']})",
+                title="Dyness Battery",
                 data=user_input,
             )
 

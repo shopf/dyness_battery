@@ -25,6 +25,9 @@
       "work_status": {
         "name": "Betriebsstatus"
       },
+      "battery_status": {
+        "name": "Batteriestatus"
+      },
       "pack_voltage": {
         "name": "Pack-Spannung"
       },
@@ -43,8 +46,14 @@
       "cell_voltage_min": {
         "name": "Zellspannung Min"
       },
-      "cell_voltage_diff": {
+      "cell_voltage_diff_mv": {
         "name": "Zellspannungsdifferenz"
+      },
+      "charge_current_limit": {
+        "name": "Max. Ladestrom"
+      },
+      "discharge_current_limit": {
+        "name": "Max. Entladestrom"
       },
       "energy_charge_day": {
         "name": "Heute geladen"
@@ -60,6 +69,12 @@
       },
       "cycle_count": {
         "name": "Ladezyklen"
+      },
+      "usable_kwh": {
+        "name": "Nutzbare Kapazität"
+      },
+      "remaining_kwh": {
+        "name": "Verbleibende Energie"
       }
     }
   }
