@@ -96,6 +96,39 @@
       },
       "alarm_total": {
         "name": "Alarmstatus"
+      },
+      "module_soh": {
+        "name": "Batteriezustand (SOH)"
+      },
+      "module_cycle_count": {
+        "name": "Ladezyklen"
+      },
+      "module_cell_v_max": {
+        "name": "Zellspannung Max"
+      },
+      "module_cell_v_min": {
+        "name": "Zellspannung Min"
+      },
+      "module_cell_spread": {
+        "name": "Zellspannungsdifferenz"
+      },
+      "module_temp_bms": {
+        "name": "BMS-Temperatur"
+      },
+      "module_temp_1": {
+        "name": "Zelltemperatur 1"
+      },
+      "module_temp_2": {
+        "name": "Zelltemperatur 2"
+      },
+      "module_voltage": {
+        "name": "Spannung"
+      },
+      "module_current": {
+        "name": "Strom"
+      },
+      "module_alarm": {
+        "name": "Alarmstatus"
       }
     }
   }

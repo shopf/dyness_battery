@@ -51,6 +51,39 @@
       },
       "temperature": {
         "name": "Temperature"
+      },
+      "module_soh": {
+        "name": "State of Health"
+      },
+      "module_cycle_count": {
+        "name": "Cycle Count"
+      },
+      "module_cell_v_max": {
+        "name": "Cell Voltage Max"
+      },
+      "module_cell_v_min": {
+        "name": "Cell Voltage Min"
+      },
+      "module_cell_spread": {
+        "name": "Cell Voltage Spread"
+      },
+      "module_temp_bms": {
+        "name": "BMS Temperature"
+      },
+      "module_temp_1": {
+        "name": "Cell Temperature 1"
+      },
+      "module_temp_2": {
+        "name": "Cell Temperature 2"
+      },
+      "module_voltage": {
+        "name": "Voltage"
+      },
+      "module_current": {
+        "name": "Current"
+      },
+      "module_alarm": {
+        "name": "Alarm Status"
       }
     }
   },
@@ -74,6 +107,9 @@
           "dongle_sn": "Dongle SN (optional, e.g. R07ABCDEF123456)"
         }
       }
+    },
+    "error": {
+      "discovery_failed": "Could not discover device automatically. Please use manual setup below."
     }
   }
 }

@@ -110,6 +110,16 @@ Folgende Sensoren sind unter **Diagnose** auf der Geräteseite verfügbar:
 
 > **Mehrere Batterien:** Bei mehreren Batterien auf einem Account wird automatisch die erste erkannte BMS verwendet. Für weitere Batterien einfach die Integration erneut hinzufügen — dieselben API-Zugangsdaten, das Gerät wird separat erkannt.
 
+### API Rate Limit & Scan-Intervall
+
+Die Dyness Cloud API erlaubt ca. 60 Anfragen pro Stunde. Die Integration passt das Update-Intervall automatisch an die Anzahl der erkannten Batteriemodule an:
+
+| Module | Intervall |
+|--------|-----------|
+| 1–2 | 5 Minuten |
+| 3–4 | 10 Minuten |
+| 5+ | 15 Minuten |
+
 ### Bekannte Einschränkungen
 
 - **Nur Monitoring** – Steuerung (Ladezeiten, SOC-Grenzen) wird von der API nicht unterstützt
@@ -227,6 +237,16 @@ The following sensors are available under **Diagnostics** on the device page:
 | API Secret | Your Dyness API Secret | `secretkey456` |
 
 > **Multiple batteries:** If you have multiple batteries on one account, the first detected BMS is used automatically. To add further batteries, simply add the integration again with the same credentials.
+
+### API Rate Limit & Scan Interval
+
+The Dyness Cloud API allows approximately 60 requests per hour. The integration automatically adjusts the update interval based on the number of detected battery modules:
+
+| Modules | Interval |
+|---------|----------|
+| 1–2 | 5 minutes |
+| 3–4 | 10 minutes |
+| 5+ | 15 minutes |
 
 ### Known Limitations
 
