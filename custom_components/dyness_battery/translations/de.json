@@ -73,6 +73,9 @@
       "cycle_count": {
         "name": "Ladezyklen"
       },
+      "total_battery_capacity": {
+        "name": "Gesamtkapazität Batterie"
+      },
       "usable_kwh": {
         "name": "Nutzbare Kapazität"
       },

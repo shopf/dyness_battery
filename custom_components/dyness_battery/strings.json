@@ -84,6 +84,9 @@
       },
       "module_alarm": {
         "name": "Alarm Status"
+      },
+      "total_battery_capacity": {
+        "name": "Total Battery Capacity"
       }
     }
   },

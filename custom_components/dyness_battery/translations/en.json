@@ -73,6 +73,9 @@
       "cycle_count": {
         "name": "Cycle Count"
       },
+      "total_battery_capacity": {
+        "name": "Total Battery Capacity"
+      },
       "usable_kwh": {
         "name": "Usable Capacity"
       },

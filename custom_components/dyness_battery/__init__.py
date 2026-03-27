@@ -370,7 +370,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data = valid[-1] if valid else (data[-1] if data else {})
 
                     # ── Statische Felder ──────────────────────────────────────
-                    data["batteryCapacity"]           = self.station_info.get("batteryCapacity")
+                    # batteryCapacity aus station/info = Kapazität eines Moduls
+                    # Bei mehreren Modulen mit Modulanzahl multiplizieren
+                    bc_single = _to_float(self.station_info.get("batteryCapacity"))
+                    n_modules = max(len(self._module_sns), 1)
+                    if bc_single is not None and n_modules > 1:
+                        data["batteryCapacity"] = round(bc_single * n_modules, 3)
+                        _LOGGER.debug(
+                            "Dyness: batteryCapacity %s × %d Module = %s kWh",
+                            bc_single, n_modules, data["batteryCapacity"]
+                        )
+                    else:
+                        data["batteryCapacity"] = bc_single
                     data["deviceCommunicationStatus"] = self.device_info.get("deviceCommunicationStatus")
                     data["firmwareVersion"]            = self.device_info.get("firmwareVersion")
                     data["workStatus"]                 = self.storage_info.get("workStatus")
@@ -423,21 +434,25 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     except (ValueError, TypeError):
                         pass
 
+                    # ── Modul-Daten anhängen ──────────────────────────────────
+                    n_modules = max(len(self._module_sns), 1)
+                    data["module_data"]  = self.module_data
+                    data["moduleCount"]  = len(self._module_sns)
+
                     try:
                         bc  = _to_float(data.get("batteryCapacity"))
                         soc = _to_float(data.get("soc"))
                         soh = _to_float(data.get("soh"))
                         if bc is not None and soc is not None and soh is not None:
-                            usable    = round(bc * (soh / 100), 3)
+                            # Gesamtkapazität = Einzelmodul × Modulanzahl
+                            total_bc  = round(bc * n_modules, 3)
+                            usable    = round(total_bc * (soh / 100), 3)
                             remaining = round(usable * (soc / 100), 3)
-                            data["usableKwh"]    = usable
-                            data["remainingKwh"] = remaining
+                            data["totalBatteryCapacity"] = total_bc
+                            data["usableKwh"]            = usable
+                            data["remainingKwh"]         = remaining
                     except (ValueError, TypeError):
                         pass
-
-                    # ── Modul-Daten anhängen ──────────────────────────────────
-                    data["module_data"]  = self.module_data
-                    data["moduleCount"]  = len(self._module_sns)
 
                     return data
 
