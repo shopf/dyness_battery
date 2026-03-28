@@ -467,38 +467,58 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
 
 def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
-    """Parst Sub-Modul Datenpunkte (DL5.0C Modul-Schema)."""
-    def g(key): return pts.get(key) if pts.get(key) != "" else None
+    """Parst Sub-Modul Datenpunkte (DL5.0C Modul-Schema).
+    
+    Verifizierte Point-IDs aus echten DL5.0C Logs:
+      10300-11800 (Schritte 100) = Zellspannungen Cell 1-16
+      12400 = BMS Board Temperatur
+      12500 = Zelltemperatur Avg Cell 1-4
+      12600 = Zelltemperatur Avg Cell 5-8
+      13400 = Strom (A)
+      13500 = Modulspannung (V)
+      13600 = Verbleibende Kapazität (Ah)
+      13800 = Gesamtkapazität (Ah)
+      13900 = Ladezyklen
+      14000 = SOC % (Remain capacity 2)
+      14100 = SOH % (Module total capacity 2)
+      14300-15200+ = Zell-Fehlercodes (0 = OK)
+    """
+    def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
 
     d = {
         "sn":           sn,
         "module_id":    mid,
-        "soh":          _to_float(g("14000")),
-        "cycle_count":  _to_float(g("13900")),
-        "cell_voltage_max": _to_float(g("10300")),  # erste Zelle als Proxy
-        "bms_temp":     _to_float(g("12400")),
-        "cell_temp_1":  _to_float(g("12500")),
-        "cell_temp_2":  _to_float(g("12600")),
-        "voltage":      _to_float(g("13500")),
-        "current":      _to_float(g("13400")),
-        "alarm_1":      pts.get("14300"),
-        "alarm_2":      pts.get("15200"),
+        "soc":          _to_float(g("14000")),   # SOC % — Remain capacity 2
+        "soh":          _to_float(g("14100")),   # SOH % — Module total capacity 2
+        "cycle_count":  _to_float(g("13900")),   # Ladezyklen
+        "remain_ah":    _to_float(g("13600")),   # Verbleibende Kapazität Ah
+        "total_ah":     _to_float(g("13800")),   # Gesamtkapazität Ah
+        "bms_temp":     _to_float(g("12400")),   # BMS Board Temperatur °C
+        "cell_temp_1":  _to_float(g("12500")),   # Avg Temp Cell 1-4 °C
+        "cell_temp_2":  _to_float(g("12600")),   # Avg Temp Cell 5-8 °C
+        "voltage":      _to_float(g("13500")),   # Modulspannung V
+        "current":      _to_float(g("13400")),   # Strom A
     }
 
-    # Zellspannungen sammeln für Max/Min
+    # Zellspannungen sammeln für Max/Min (10300, 10400, ... 11800)
     cells = []
     for i in range(1, 17):
         pid = str(10200 + i * 100)
         v = _to_float(pts.get(pid))
-        if v is not None:
+        if v is not None and v > 0:
             cells.append(v)
     if cells:
-        d["cell_voltage_max"] = max(cells)
-        d["cell_voltage_min"] = min(cells)
+        d["cell_voltage_max"]       = max(cells)
+        d["cell_voltage_min"]       = min(cells)
         d["cell_voltage_spread_mv"] = round((max(cells) - min(cells)) * 1000, 1)
 
-    d["has_alarm"] = (
-        (int(pts.get("14300") or 0) != 0) or
-        (int(pts.get("15200") or 0) != 0)
-    )
+    # Alarm: Zell-Fehlercodes 14300-15200+ prüfen (je 16 Zellen = 16 Points à 100)
+    alarm = False
+    for i in range(16):
+        pid = str(14300 + i * 100)
+        if int(pts.get(pid) or 0) != 0:
+            alarm = True
+            break
+    d["has_alarm"] = alarm
+
     return d

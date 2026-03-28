@@ -135,6 +135,7 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
 # ── Modul-Sensoren (pro Sub-Modul dynamisch registriert) ─────────────────────
 # (data_key, translation_key, unit, device_class, state_class, icon, precision)
 MODULE_SENSORS = [
+    ("soc",                  "module_soc",            PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-high",          None),
     ("soh",                  "module_soh",            PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-heart",         None),
     ("cycle_count",          "module_cycle_count",    None,                         None,                          SensorStateClass.TOTAL_INCREASING, "mdi:battery-sync",          None),
     ("cell_voltage_max",     "module_cell_v_max",     UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",             3),

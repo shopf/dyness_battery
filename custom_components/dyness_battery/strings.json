@@ -87,6 +87,9 @@
       },
       "total_battery_capacity": {
         "name": "Total Battery Capacity"
+      },
+      "module_soc": {
+        "name": "State of Charge"
       }
     }
   },
