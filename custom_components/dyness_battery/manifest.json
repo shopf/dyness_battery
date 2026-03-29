@@ -1,12 +1,11 @@
 {
   "domain": "dyness_battery",
-  "name": "Dyness Battery",
-  "version": "1.6.3",
-  "documentation": "https://github.com/shopf/dyness_battery",
-  "issue_tracker": "https://github.com/shopf/dyness_battery/issues",
-  "dependencies": [],
-  "codeowners": ["@shopf"],
-  "requirements": ["aiohttp"],
+  "name": "Dyness Tower T14",
+  "codeowners": ["@me"],
+  "config_flow": true,
+  "documentation": "https://github.com/custom-components/dyness",
+  "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "config_flow": true
+  "requirements": ["aiohttp", "async_timeout"],
+  "version": "1.6.4"
 }
