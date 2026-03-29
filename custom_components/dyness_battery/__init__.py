@@ -70,6 +70,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return unload_ok
+
 class DynessDataCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, api_id, api_secret, api_base, device_sn=None, dongle_sn=None):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(minutes=5))
@@ -107,7 +113,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         async with aiohttp.ClientSession() as session:
             try:
                 async with async_timeout.timeout(90):
-                    # Auto-Discovery
+                    # BDU Auto-Discovery
                     if not self.device_sn:
                         res = await self._call(session, "/v1/device/storage/list", {})
                         if _is_success(res):
@@ -119,12 +125,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         await self._call(session, "/v1/device/bindSn", {"deviceSn": self.device_sn})
                         self._bound_sns.add(self.device_sn)
 
-                    # Main Scan
+                    # Real-Time Data Fetch
                     rt_res = await self._call(session, "/v1/device/realTime/data", {"deviceSn": self.device_sn})
                     if _is_success(rt_res):
                         raw = rt_res.get("data", []) or []
                         self.realtime_data = {item["pointId"]: item["pointValue"] for item in raw if isinstance(item, dict)}
                         
+                        # Module Detection & Auto-Binding
                         sub_raw = self.realtime_data.get("SUB", "")
                         if sub_raw:
                             self._module_sns = [s.strip() for s in str(sub_raw).split(",") if s.strip() and not s.endswith(_BMS_SUFFIXES)]
@@ -133,7 +140,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     await self._call(session, "/v1/device/bindSn", {"deviceSn": sn})
                                     self._bound_sns.add(sn)
 
-                    # Module Scan
+                    # Detailed Module Parsing (30 Cells)
                     new_module_data = {}
                     for sn in self._module_sns:
                         m_res = await self._call(session, "/v1/device/realTime/data", {"deviceSn": sn})
@@ -142,31 +149,30 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             new_module_data[mid] = _parse_module_points(sn, mid, {item["pointId"]: item["pointValue"] for item in m_res.get("data", [])})
                     self.module_data = new_module_data
 
-                    # Static Data
-                    if not self.station_info:
-                        res = await self._call(session, "/v1/station/info", {"deviceSn": self.device_sn})
-                        self.station_info = res.get("data", {}) or {}
-
+                    # Main Unit Data Mapping
                     res = await self._call(session, "/v1/device/getLastPowerDataBySn", {"pageNo": 1, "pageSize": 1, "deviceSn": self.device_sn})
                     data = res.get("data", [{}])[-1] if isinstance(res.get("data"), list) else {}
                     
-                    # T14 Tower Mapping from Explorer Results
                     rt = self.realtime_data
                     mapping = {
                         "packVoltage": "1100", "soh": "1500", "tempMax": "3000", "tempMin": "3300",
                         "cellVoltageMax": "2400", "cellVoltageMin": "2700", "cycleCount": "1800",
                         "energyChargeTotal": "1900", "chargeLimit": "2000", "dischargeLimit": "2100",
                         "fanStatus": "3800", "heatingStatus": "3900", "balancingStatus": "4000",
-                        "maxCellBox": "2500", "minCellBox": "2800", "tempSpreadMax": "3700",
                         "insulationPos": "2200", "insulationNeg": "2300", "ratedCapacity": "1700",
-                        "cellsPerBox": "4100", "boxCount": "4300", "masterAlarm": "9999999"
+                        "boxCount": "4300", "masterAlarm": "9999999"
                     }
                     for k, v in mapping.items():
                         data[k] = rt.get(v)
 
-                    # Use Rated Capacity (Point 1700) if Station Info fails
-                    data["batteryCapacity"] = _to_float(data.get("ratedCapacity")) or _to_float(self.station_info.get("batteryCapacity"))
-                    
+                    # Manual Alarm Decoding (Bypass 401 Access Denied)
+                    alarm_map = {
+                        "al_spread_v": "5001", "al_spread_t": "5002", "al_insul": "5003",
+                        "al_afe": "5101", "al_bms": "5102", "al_sys": "5104"
+                    }
+                    for k, pid in alarm_map.items():
+                        data[k] = (str(rt.get(pid)) == "1")
+
                     vmax, vmin = _to_float(data.get("cellVoltageMax")), _to_float(data.get("cellVoltageMin"))
                     if vmax and vmin: data["cellVoltageDiffMv"] = round((vmax - vmin) * 1000, 1)
 
@@ -176,13 +182,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
 def _parse_module_points(sn, mid, pts):
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
-    d = {"sn": sn, "module_id": mid, "voltage": _to_float(g("13500")), "current": _to_float(g("13400"))}
+    d = {"sn": sn, "module_id": mid}
+    # 30 Cell Mapping
     cells = [_to_float(pts.get(str(11100 + i * 100))) for i in range(1, 31)]
     for i, v in enumerate(cells, 1):
         if v is not None: d[f"cell_{i:02d}"] = v
     if any(c is not None for c in cells):
         valid = [c for c in cells if c is not None]
-        d["cell_voltage_max"], d["cell_voltage_min"] = max(valid), min(valid)
         d["cell_voltage_spread_mv"] = round((max(valid) - min(valid)) * 1000, 1)
     d["cell_temp_1"], d["cell_temp_2"] = _to_float(g("14300")), _to_float(g("14400"))
     return d
