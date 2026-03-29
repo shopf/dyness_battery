@@ -1,0 +1,141 @@
+{
+  "entity": {
+    "sensor": {
+      "battery_soc": {
+        "name": "Etat de charge"
+      },
+      "battery_power": {
+        "name": "Puissance"
+      },
+      "battery_current": {
+        "name": "Courant"
+      },
+      "last_update": {
+        "name": "Dernière mise à jour"
+      },
+      "battery_capacity": {
+        "name": "Capacité de la batterie"
+      },
+      "communication_status": {
+        "name": "Statut de la communication"
+      },
+      "firmware_version": {
+        "name": "Version du firmware"
+      },
+      "work_status": {
+        "name": "Etat de fonctionnement"
+      },
+      "battery_status": {
+        "name": "Etat de la batterie"
+      },
+      "pack_voltage": {
+        "name": "Tension du pack"
+      },
+      "battery_soh": {
+        "name": "Etat de santé"
+      },
+      "temperature": {
+        "name": "Température"
+      },
+      "temp_max": {
+        "name": "Température Max"
+      },
+      "temp_min": {
+        "name": "Température Min"
+      },
+      "cell_voltage_max": {
+        "name": "Tension Cellule Max"
+      },
+      "cell_voltage_min": {
+        "name": "Tension Cellule Min"
+      },
+      "cell_voltage_diff_mv": {
+        "name": "Différence de tension"
+      },
+      "charge_current_limit": {
+        "name": "Limite courant de charge"
+      },
+      "discharge_current_limit": {
+        "name": "Limite courant de décharge"
+      },
+      "energy_charge_day": {
+        "name": "Energie chargée aujourd'hui"
+      },
+      "energy_discharge_day": {
+        "name": "Energie déchargée aujourd'hui"
+      },
+      "energy_charge_total": {
+        "name": "Energie chargée total"
+      },
+      "energy_discharge_total": {
+        "name": "Energie déchargée total"
+      },
+      "cycle_count": {
+        "name": "Nombre de cycles"
+      },
+      "total_battery_capacity": {
+        "name": "Capacité totale batterie"
+      },
+      "usable_kwh": {
+        "name": "Capacité utilisable"
+      },
+      "remaining_kwh": {
+        "name": "Energie restante"
+      },
+      "temp_mosfet": {
+        "name": "Température MOSFET"
+      },
+      "temp_bms_max": {
+        "name": "Température BMS Max"
+      },
+      "temp_bms_min": {
+        "name": "Température BMS Min"
+      },
+      "alarm_status_1": {
+        "name": "Statut Alarme 1"
+      },
+      "alarm_status_2": {
+        "name": "Statut Alarme 2"
+      },
+      "alarm_total": {
+        "name": "Statut Alarme Total"
+      },
+      "module_soc": {
+        "name": "Etat de charge"
+      },
+      "module_soh": {
+        "name": "Etat de santé"
+      },
+      "module_cycle_count": {
+        "name": "Nombre de cycles"
+      },
+      "module_cell_v_max": {
+        "name": "Tension Cellule Max"
+      },
+      "module_cell_v_min": {
+        "name": "Tension Cellule Max"
+      },
+      "module_cell_spread": {
+        "name": "Différence de tension"
+      },
+      "module_temp_bms": {
+        "name": "Température BMS"
+      },
+      "module_temp_1": {
+        "name": "Température Cellules 1"
+      },
+      "module_temp_2": {
+        "name": "Température Cellules 2"
+      },
+      "module_voltage": {
+        "name": "Tension"
+      },
+      "module_current": {
+        "name": "Courant"
+      },
+      "module_alarm": {
+        "name": "Statut Alarme"
+      }
+    }
+  }
+}
