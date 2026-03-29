@@ -156,12 +156,38 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     
                     data["batteryCapacity"] = _to_float(self.station_info.get("batteryCapacity"))
                     rt = self.realtime_data
+                    
+                    # Full Tower Schema Mapping
                     if "1400" in rt:
-                        for k, v in {"soh":"1500","tempMax":"3000","tempMin":"3300","cellVoltageMax":"2400","cellVoltageMin":"2700","cycleCount":"1800","chargeLimit":"2000","dischargeLimit":"2100","fanStatus":"3800","heatingStatus":"3900","maxCellBox":"2500","minCellBox":"2800"}.items():
+                        mapping = {
+                            "soh": "1500", "tempMax": "3000", "tempMin": "3300", 
+                            "cellVoltageMax": "2400", "cellVoltageMin": "2700", 
+                            "cycleCount": "1800", "energyChargeTotal": "1900",
+                            "chargeLimit": "2000", "dischargeLimit": "2100", 
+                            "fanStatus": "3800", "heatingStatus": "3900", 
+                            "maxCellBox": "2500", "minCellBox": "2800"
+                        }
+                        for k, v in mapping.items():
                             data[k] = rt.get(v)
                     
+                    # Calculations for Usable/Remaining Energy
+                    try:
+                        bc = _to_float(data.get("batteryCapacity"))
+                        soc = _to_float(data.get("soc"))
+                        soh = _to_float(data.get("soh"))
+                        if bc and soc and soh:
+                            data["usableKwh"] = round(bc * (soh / 100), 3)
+                            data["remainingKwh"] = round(data["usableKwh"] * (soc / 100), 3)
+                    except Exception: pass
+
                     vmax, vmin = _to_float(data.get("cellVoltageMax")), _to_float(data.get("cellVoltageMin"))
                     if vmax and vmin: data["cellVoltageDiffMv"] = round((vmax - vmin) * 1000, 1)
+                    
+                    try:
+                        p = float(data.get("realTimePower") or 0)
+                        data["batteryStatus"] = "Charging" if p > 10 else "Discharging" if p < -10 else "Standby"
+                    except Exception: pass
+
                     data["module_data"] = self.module_data
                     return data
             except Exception as e: raise UpdateFailed(f"Error: {e}")
@@ -177,4 +203,5 @@ def _parse_module_points(sn, mid, pts):
         d["cell_voltage_max"], d["cell_voltage_min"] = max(valid), min(valid)
         d["cell_voltage_spread_mv"] = round((max(valid) - min(valid)) * 1000, 1)
     d["cell_temp_1"], d["cell_temp_2"] = _to_float(g("14300")), _to_float(g("14400"))
+    d["soc"], d["soh"] = _to_float(g("14000")), _to_float(g("14100"))
     return d
