@@ -11,18 +11,11 @@ SENSORS = [
     ("soc", "battery_soc", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, "mdi:battery-high", None, None),
     ("realTimePower", "battery_power", UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:lightning-bolt", None, None),
     ("realTimeCurrent", "battery_current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, "mdi:current-dc", None, None),
-    ("batteryStatus", "battery_status", None, None, None, "mdi:battery-charging", None, None),
     ("packVoltage", "pack_voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:sine-wave", 3, None),
     ("soh", "battery_soh", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, "mdi:battery-heart", None, None),
-    ("tempMax", "temp_max", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, "mdi:thermometer-high", None, None),
-    ("tempMin", "temp_min", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, "mdi:thermometer-low", None, None),
     ("cellVoltageMax", "cell_voltage_max", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:sine-wave", 3, None),
     ("cellVoltageMin", "cell_voltage_min", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:sine-wave", 3, None),
     ("cellVoltageDiffMv", "cell_voltage_diff_mv", "mV", None, SensorStateClass.MEASUREMENT, "mdi:arrow-expand-horizontal", 1, None),
-    ("energyChargeTotal", "energy_charge_total", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, "mdi:battery-charging-100", None, None),
-    ("cycleCount", "cycle_count", None, None, SensorStateClass.TOTAL_INCREASING, "mdi:battery-sync", None, None),
-    ("usableKwh", "usable_kwh", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, None, "mdi:battery-heart", None, None),
-    ("remainingKwh", "remaining_kwh", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, None, "mdi:battery-charging", None, None),
     ("chargeLimit", "charge_limit", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, "mdi:battery-arrow-up", None, None),
     ("dischargeLimit", "discharge_limit", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, "mdi:battery-arrow-down", None, None),
     ("fanStatus", "fan_status", None, None, None, "mdi:fan", None, _D),
@@ -32,7 +25,7 @@ SENSORS = [
     ("workStatus", "work_status", None, None, None, "mdi:home-battery", None, _D),
 ]
 
-ALWAYS_REGISTER = {"soc", "realTimePower", "realTimeCurrent", "batteryCapacity", "firmwareVersion", "workStatus", "batteryStatus"}
+ALWAYS_REGISTER = {"soc", "realTimePower", "realTimeCurrent", "batteryCapacity", "firmwareVersion", "workStatus"}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -62,10 +55,9 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
     def native_value(self): return self.coordinator.data.get(self._key)
 
 MODULE_SENSORS = [
-    ("soc", "module_soc", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, "mdi:battery-high", None),
-    ("soh", "module_soh", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, "mdi:battery-heart", None),
     ("cell_temp_1", "module_temp_1", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, "mdi:thermometer", None),
     ("cell_temp_2", "module_temp_2", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, "mdi:thermometer", None),
+    ("cell_voltage_spread_mv", "module_spread", "mV", None, SensorStateClass.MEASUREMENT, "mdi:arrow-expand-horizontal", 1),
     *[(f"cell_{i:02d}", f"cell_{i:02d}", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:battery-outline", 3) for i in range(1, 31)],
 ]
 

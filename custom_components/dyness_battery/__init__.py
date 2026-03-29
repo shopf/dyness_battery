@@ -156,8 +156,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     
                     data["batteryCapacity"] = _to_float(self.station_info.get("batteryCapacity"))
                     rt = self.realtime_data
-                    
-                    # Full Tower Schema Mapping
                     if "1400" in rt:
                         mapping = {
                             "soh": "1500", "tempMax": "3000", "tempMin": "3300", 
@@ -170,38 +168,31 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         for k, v in mapping.items():
                             data[k] = rt.get(v)
                     
-                    # Calculations for Usable/Remaining Energy
-                    try:
-                        bc = _to_float(data.get("batteryCapacity"))
-                        soc = _to_float(data.get("soc"))
-                        soh = _to_float(data.get("soh"))
-                        if bc and soc and soh:
-                            data["usableKwh"] = round(bc * (soh / 100), 3)
-                            data["remainingKwh"] = round(data["usableKwh"] * (soc / 100), 3)
-                    except Exception: pass
-
                     vmax, vmin = _to_float(data.get("cellVoltageMax")), _to_float(data.get("cellVoltageMin"))
                     if vmax and vmin: data["cellVoltageDiffMv"] = round((vmax - vmin) * 1000, 1)
                     
-                    try:
-                        p = float(data.get("realTimePower") or 0)
-                        data["batteryStatus"] = "Charging" if p > 10 else "Discharging" if p < -10 else "Standby"
-                    except Exception: pass
-
                     data["module_data"] = self.module_data
                     return data
             except Exception as e: raise UpdateFailed(f"Error: {e}")
 
 def _parse_module_points(sn, mid, pts):
+    """Correctly parses T14 modules: 30 cells, 2 temps, NO module-level SOC from cloud."""
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
-    d = {"sn": sn, "module_id": mid, "voltage": _to_float(g("13500")), "current": _to_float(g("13400"))}
-    cells = [_to_float(pts.get(str(11100 + i * 100))) for i in range(1, 31)]
-    for i, v in enumerate(cells, 1):
-        if v is not None: d[f"cell_{i:02d}"] = v
-    if any(c is not None for c in cells):
-        valid = [c for c in cells if c is not None]
-        d["cell_voltage_max"], d["cell_voltage_min"] = max(valid), min(valid)
-        d["cell_voltage_spread_mv"] = round((max(valid) - min(valid)) * 1000, 1)
+    d = {"sn": sn, "module_id": mid}
+    
+    # Correct Cell Mapping (11200 - 14100)
+    cells = []
+    for i in range(1, 31):
+        pid = str(11100 + i * 100)
+        val = _to_float(pts.get(pid))
+        if val is not None:
+            d[f"cell_{i:02d}"] = val
+            cells.append(val)
+    
+    if cells:
+        d["cell_voltage_max"], d["cell_voltage_min"] = max(cells), min(cells)
+        d["cell_voltage_spread_mv"] = round((max(cells) - min(cells)) * 1000, 1)
+    
+    # Temperature Sensors
     d["cell_temp_1"], d["cell_temp_2"] = _to_float(g("14300")), _to_float(g("14400"))
-    d["soc"], d["soh"] = _to_float(g("14000")), _to_float(g("14100"))
     return d
