@@ -114,7 +114,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         async with aiohttp.ClientSession() as session:
             try:
                 async with async_timeout.timeout(90):
-                    # Discovery & Initial Bind
                     if not self.device_sn:
                         res = await self._call(session, "/v1/device/storage/list", {})
                         if _is_success(res):
@@ -126,24 +125,20 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         await self._call(session, "/v1/device/bindSn", {"deviceSn": self.device_sn})
                         self._bound_sns.add(self.device_sn)
 
-                    # Get Master Data
                     rt_res = await self._call(session, "/v1/device/realTime/data", {"deviceSn": self.device_sn})
                     if _is_success(rt_res):
                         raw = rt_res.get("data", []) or []
                         self.realtime_data = {item["pointId"]: item["pointValue"] for item in raw if isinstance(item, dict)}
                         
-                        # Detect & Auto-Bind Modules
                         sub_raw = self.realtime_data.get("SUB", "")
                         if sub_raw:
                             candidates = [s.strip() for s in str(sub_raw).split(",") if s.strip()]
                             self._module_sns = [s for s in candidates if not s.endswith(_BMS_SUFFIXES)]
                             for sn in self._module_sns:
                                 if sn not in self._bound_sns:
-                                    _LOGGER.info("Dyness: Auto-binding module %s", sn)
                                     await self._call(session, "/v1/device/bindSn", {"deviceSn": sn})
                                     self._bound_sns.add(sn)
 
-                    # Fetch Per-Module Cells
                     new_module_data = {}
                     for sn in self._module_sns:
                         m_res = await self._call(session, "/v1/device/realTime/data", {"deviceSn": sn})
@@ -152,7 +147,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             new_module_data[mid] = _parse_module_points(sn, mid, {item["pointId"]: item["pointValue"] for item in m_res.get("data", [])})
                     self.module_data = new_module_data
 
-                    # Static Info & Final Mapping
                     if not self.station_info:
                         res = await self._call(session, "/v1/station/info", {"deviceSn": self.device_sn})
                         self.station_info = res.get("data", {}) or {}

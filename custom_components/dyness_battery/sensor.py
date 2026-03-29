@@ -49,6 +49,9 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
         if prec: self._attr_suggested_display_precision = prec
         if cat: self._attr_entity_category = cat
     @property
+    def device_info(self):
+        return {"identifiers": {(DOMAIN, self.coordinator.device_sn)}, "name": "Dyness Main Unit", "manufacturer": "Dyness", "model": "Tower BDU"}
+    @property
     def native_value(self): return self.coordinator.data.get(self._key)
 
 MODULE_SENSORS = [
@@ -66,5 +69,8 @@ class DynessModuleSensor(CoordinatorEntity, SensorEntity):
         self._attr_state_class, self._attr_icon, self._attr_has_entity_name = state, icon, True
         self._attr_unique_id = f"{entry.entry_id}_{mid}_{key}"
         if prec: self._attr_suggested_display_precision = prec
+    @property
+    def device_info(self):
+        return {"identifiers": {(DOMAIN, f"{self.coordinator.device_sn}_{self._mid}")}, "name": f"Dyness Module {self._mid}", "manufacturer": "Dyness", "model": "Battery Pack", "via_device": (DOMAIN, self.coordinator.device_sn)}
     @property
     def native_value(self): return self.coordinator.data.get("module_data", {}).get(self._mid, {}).get(self._key)
