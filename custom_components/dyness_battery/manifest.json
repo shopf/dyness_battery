@@ -1,12 +1,12 @@
 
 {
-  "domain": "dyness_battery",
-  "name": "Dyness Battery",
+  "domain": "dyness_tower",
+  "name": "Dyness Tower",
   "version": "1.6.3",
-  "documentation": "https://github.com/shopf/dyness_battery",
-  "issue_tracker": "https://github.com/shopf/dyness_battery/issues",
+  "documentation": "https://github.com/DaveINV2/dyness_tower",
+  "issue_tracker": "https://github.com/DaveINV2/dyness_tower",
   "dependencies": [],
-  "codeowners": ["@shopf"],
+  "codeowners": ["@DaveINV2"],
   "requirements": ["aiohttp"],
   "iot_class": "cloud_polling",
   "config_flow": true
