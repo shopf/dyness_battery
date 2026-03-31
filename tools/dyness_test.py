@@ -14,6 +14,11 @@ WARNUNG: unBindSn ist im Skript deaktiviert! Niemals aktivieren ohne danach
          sofort bindSn erneut aufzurufen — sonst verlierst du den API-Zugriff.
 """
 
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 import hashlib
 import hmac
 import base64

@@ -292,11 +292,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 sub_raw = self.realtime_data.get("SUB", "")
                                 if sub_raw:
                                     candidates = [s.strip() for s in str(sub_raw).split(",") if s.strip()]
-                                    # Nur echte Modul-SNs — keine BMS-SNs
-                                    candidates = [s for s in candidates if not s.endswith(_BMS_SUFFIXES)]
-                                    # Nur bei mehreren Modulen extra API-Calls machen
-                                    # Ein einzelnes Sub-Modul = Junior Box / einfaches Gerät
-                                    # → kein eigener realTime/data Abruf nötig
+                                    # BMS/BDU-SNs und Tower Sub-Module (-BDU-01 etc.) ausschließen
+                                    # Tower Sub-Module haben Format: XXXX-BDU-01, XXXX-BDU-02 etc.
+                                    import re
+                                    candidates = [
+                                        s for s in candidates
+                                        if not s.endswith(_BMS_SUFFIXES)
+                                        and not re.search(r'-BDU-\d+$', s)
+                                    ]
+                                    # Nur bei mehreren DL5.0C-artigen Modulen extra API-Calls machen
                                     if len(candidates) > 1:
                                         self._module_sns = candidates
                                         _LOGGER.info(
@@ -306,7 +310,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                         self._update_scan_interval()
                                     else:
                                         _LOGGER.debug(
-                                            "Dyness: Einzelnes Sub-Modul %s – kein separater Abruf",
+                                            "Dyness: Kein Multi-Modul Setup erkannt (%s)",
                                             candidates
                                         )
                         else:
@@ -414,6 +418,24 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["cellVoltageMin"]         = rt.get("2700")
                         data["cycleCount"]             = rt.get("1800")
                         data["energyChargeTotal"]      = rt.get("1900")
+                        # Point 1600 = verbleibende Kapazität kWh (direkt vom Tower geliefert)
+                        tower_remaining = _to_float(rt.get("1600"))
+                        if tower_remaining is not None and tower_remaining > 0:
+                            data["remainingKwh"] = tower_remaining
+
+                    # ── Temperatur-Logik ─────────────────────────────────────
+                    # Wenn tempMax == tempMin → nur tempMax behalten (ein Sensor)
+                    # Wenn verschieden → beide behalten (zwei Sensoren)
+                    t_max = _to_float(data.get("tempMax"))
+                    t_min = _to_float(data.get("tempMin"))
+                    if t_max is not None and t_min is not None and t_max == t_min:
+                        data.pop("tempMin", None)  # Doppelten Sensor vermeiden
+
+                    # BMS Temp: gleiche Logik
+                    bms_max = _to_float(data.get("tempBmsMax"))
+                    bms_min = _to_float(data.get("tempBmsMin"))
+                    if bms_max is not None and bms_min is not None and bms_max == bms_min:
+                        data.pop("tempBmsMin", None)
 
                     # ── Berechnete Felder ─────────────────────────────────────
                     try:
