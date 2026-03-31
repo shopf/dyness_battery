@@ -113,7 +113,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         async with aiohttp.ClientSession() as session:
             try:
                 async with async_timeout.timeout(90):
-                    # BDU Auto-Discovery [cite: 54]
+                    # BDU Auto-Discovery
                     if not self.device_sn:
                         res = await self._call(session, "/v1/device/storage/list", {})
                         if _is_success(res):
@@ -131,16 +131,19 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         raw = rt_res.get("data", []) or []
                         self.realtime_data = {item["pointId"]: item["pointValue"] for item in raw if isinstance(item, dict)}
                         
-                        # Module Detection & Auto-Binding [cite: 2]
+                        # Module Detection & Auto-Binding
                         sub_raw = self.realtime_data.get("SUB", "")
                         if sub_raw:
                             self._module_sns = [s.strip() for s in str(sub_raw).split(",") if s.strip() and not s.endswith(_BMS_SUFFIXES)]
                             for sn in self._module_sns:
+                                # Only attempt to bind if we haven't tried this session
                                 if sn not in self._bound_sns:
+                                    _LOGGER.debug("Attempting to bind sub-module: %s", sn)
                                     await self._call(session, "/v1/device/bindSn", {"deviceSn": sn})
+                                    # Add to bound set immediately so we don't spam retries on the next loop
                                     self._bound_sns.add(sn)
 
-                    # Detailed Module Parsing (30 Cells) [cite: 14, 15]
+                    # Detailed Module Parsing
                     new_module_data = {}
                     for sn in self._module_sns:
                         m_res = await self._call(session, "/v1/device/realTime/data", {"deviceSn": sn})
@@ -149,7 +152,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             new_module_data[mid] = _parse_module_points(sn, mid, {item["pointId"]: item["pointValue"] for item in m_res.get("data", [])})
                     self.module_data = new_module_data
 
-                    # Main Unit Data Mapping [cite: 21-27]
+                    # Main Unit Data Mapping
                     res = await self._call(session, "/v1/device/getLastPowerDataBySn", {"pageNo": 1, "pageSize": 1, "deviceSn": self.device_sn})
                     data = res.get("data", [{}])[-1] if isinstance(res.get("data"), list) else {}
                     
@@ -159,15 +162,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         "cellVoltageMax": "2400", "cellVoltageMin": "2700", "cycleCount": "1800",
                         "energyChargeTotal": "1900", "chargeLimit": "2000", "dischargeLimit": "2100",
                         "fanStatus": "3800", "heatingStatus": "3900", "balancingStatus": "4000",
-                        "insulationPos": "2200", "insulationNeg": "2300", "ratedCapacity": "1700",
-                        "boxCount": "4300", "masterAlarm": "9999999"
+                        "ratedCapacity": "1700", "boxCount": "4300", "masterAlarm": "9999999"
                     }
                     for k, v in mapping.items():
                         data[k] = rt.get(v)
 
-                    # Manual Alarm Decoding (Bypass 401 Access Denied) [cite: 41-53, 56]
+                    # Manual Alarm Decoding (Bypass 401 Access Denied)
                     alarm_map = {
-                        "al_spread_v": "5001", "al_spread_t": "5002", "al_insul": "5003",
+                        "al_spread_v": "5001", "al_spread_t": "5002",
                         "al_afe": "5101", "al_bms": "5102", "al_sys": "5104"
                     }
                     for k, pid in alarm_map.items():
@@ -183,12 +185,27 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 def _parse_module_points(sn, mid, pts):
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
     d = {"sn": sn, "module_id": mid}
-    # 30 Cell Mapping [cite: 14, 15]
-    cells = [_to_float(pts.get(str(11100 + i * 100))) for i in range(1, 31)]
+    cells = []
+
+    # SMART DETECTION: Check if this is a Tower T14 (Sequential IDs starting at 11201)
+    if pts.get("11201") is not None or pts.get("11101") is not None:
+        for i in range(1, 31):
+            val = pts.get(str(11200 + i)) or pts.get(str(11100 + i))
+            cells.append(_to_float(val))
+    
+    # FALLBACK: DL5.0C / Legacy Models (Steps of 100 starting at 10300)
+    else:
+        for i in range(1, 17): # Legacy usually maxes at 16 cells
+            cells.append(_to_float(pts.get(str(10200 + i * 100))))
+
+    # Populate the dictionary with whichever cells we found
     for i, v in enumerate(cells, 1):
-        if v is not None: d[f"cell_{i:02d}"] = v
-    if any(c is not None for c in cells):
-        valid = [c for c in cells if c is not None]
-        d["cell_voltage_spread_mv"] = round((max(valid) - min(valid)) * 1000, 1)
+        if v is not None: 
+            d[f"cell_{i:02d}"] = v
+
+    valid_cells = [c for c in cells if c is not None]
+    if valid_cells:
+        d["cell_voltage_spread_mv"] = round((max(valid_cells) - min(valid_cells)) * 1000, 1)
+        
     d["cell_temp_1"], d["cell_temp_2"] = _to_float(g("14300")), _to_float(g("14400"))
     return d
