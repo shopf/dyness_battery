@@ -90,6 +90,117 @@
       },
       "module_soc": {
         "name": "State of Charge"
+      },
+      "alarm_spread_v": {
+        "name": "Alarm: Voltage Spread"
+      },
+      "alarm_spread_t": {
+        "name": "Alarm: Temperature Spread"
+      },
+      "alarm_insul": {
+        "name": "Alarm: Low Insulation"
+      },
+      "alarm_afe": {
+        "name": "Alarm: AFE Communication"
+      },
+      "alarm_bms": {
+        "name": "Alarm: BMS Communication"
+      },
+      "alarm_sys": {
+        "name": "Alarm: System Fault"
+      },
+      "module_cell_01": {
+        "name": "Cell 01"
+      },
+      "module_cell_02": {
+        "name": "Cell 02"
+      },
+      "module_cell_03": {
+        "name": "Cell 03"
+      },
+      "module_cell_04": {
+        "name": "Cell 04"
+      },
+      "module_cell_05": {
+        "name": "Cell 05"
+      },
+      "module_cell_06": {
+        "name": "Cell 06"
+      },
+      "module_cell_07": {
+        "name": "Cell 07"
+      },
+      "module_cell_08": {
+        "name": "Cell 08"
+      },
+      "module_cell_09": {
+        "name": "Cell 09"
+      },
+      "module_cell_10": {
+        "name": "Cell 10"
+      },
+      "module_cell_11": {
+        "name": "Cell 11"
+      },
+      "module_cell_12": {
+        "name": "Cell 12"
+      },
+      "module_cell_13": {
+        "name": "Cell 13"
+      },
+      "module_cell_14": {
+        "name": "Cell 14"
+      },
+      "module_cell_15": {
+        "name": "Cell 15"
+      },
+      "module_cell_16": {
+        "name": "Cell 16"
+      },
+      "module_cell_17": {
+        "name": "Cell 17"
+      },
+      "module_cell_18": {
+        "name": "Cell 18"
+      },
+      "module_cell_19": {
+        "name": "Cell 19"
+      },
+      "module_cell_20": {
+        "name": "Cell 20"
+      },
+      "module_cell_21": {
+        "name": "Cell 21"
+      },
+      "module_cell_22": {
+        "name": "Cell 22"
+      },
+      "module_cell_23": {
+        "name": "Cell 23"
+      },
+      "module_cell_24": {
+        "name": "Cell 24"
+      },
+      "module_cell_25": {
+        "name": "Cell 25"
+      },
+      "module_cell_26": {
+        "name": "Cell 26"
+      },
+      "module_cell_27": {
+        "name": "Cell 27"
+      },
+      "module_cell_28": {
+        "name": "Cell 28"
+      },
+      "module_cell_29": {
+        "name": "Cell 29"
+      },
+      "module_cell_30": {
+        "name": "Cell 30"
+      },
+      "alarm_total_tower": {
+        "name": "Alarm Status"
       }
     }
   },

@@ -135,6 +135,117 @@
       },
       "module_alarm": {
         "name": "Statut Alarme"
+      },
+      "alarm_spread_v": {
+        "name": "Alarme: Écart de tension"
+      },
+      "alarm_spread_t": {
+        "name": "Alarme: Écart de température"
+      },
+      "alarm_insul": {
+        "name": "Alarme: Isolation faible"
+      },
+      "alarm_afe": {
+        "name": "Alarme: Communication AFE"
+      },
+      "alarm_bms": {
+        "name": "Alarme: Communication BMS"
+      },
+      "alarm_sys": {
+        "name": "Alarme: Défaut système"
+      },
+      "module_cell_01": {
+        "name": "Cellule 01"
+      },
+      "module_cell_02": {
+        "name": "Cellule 02"
+      },
+      "module_cell_03": {
+        "name": "Cellule 03"
+      },
+      "module_cell_04": {
+        "name": "Cellule 04"
+      },
+      "module_cell_05": {
+        "name": "Cellule 05"
+      },
+      "module_cell_06": {
+        "name": "Cellule 06"
+      },
+      "module_cell_07": {
+        "name": "Cellule 07"
+      },
+      "module_cell_08": {
+        "name": "Cellule 08"
+      },
+      "module_cell_09": {
+        "name": "Cellule 09"
+      },
+      "module_cell_10": {
+        "name": "Cellule 10"
+      },
+      "module_cell_11": {
+        "name": "Cellule 11"
+      },
+      "module_cell_12": {
+        "name": "Cellule 12"
+      },
+      "module_cell_13": {
+        "name": "Cellule 13"
+      },
+      "module_cell_14": {
+        "name": "Cellule 14"
+      },
+      "module_cell_15": {
+        "name": "Cellule 15"
+      },
+      "module_cell_16": {
+        "name": "Cellule 16"
+      },
+      "module_cell_17": {
+        "name": "Cellule 17"
+      },
+      "module_cell_18": {
+        "name": "Cellule 18"
+      },
+      "module_cell_19": {
+        "name": "Cellule 19"
+      },
+      "module_cell_20": {
+        "name": "Cellule 20"
+      },
+      "module_cell_21": {
+        "name": "Cellule 21"
+      },
+      "module_cell_22": {
+        "name": "Cellule 22"
+      },
+      "module_cell_23": {
+        "name": "Cellule 23"
+      },
+      "module_cell_24": {
+        "name": "Cellule 24"
+      },
+      "module_cell_25": {
+        "name": "Cellule 25"
+      },
+      "module_cell_26": {
+        "name": "Cellule 26"
+      },
+      "module_cell_27": {
+        "name": "Cellule 27"
+      },
+      "module_cell_28": {
+        "name": "Cellule 28"
+      },
+      "module_cell_29": {
+        "name": "Cellule 29"
+      },
+      "module_cell_30": {
+        "name": "Cellule 30"
+      },
+      "alarm_total_tower": {
+        "name": "Statut Alarme"
       }
     }
   }

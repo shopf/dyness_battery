@@ -33,12 +33,34 @@ SENSORS = [
     ("cycleCount",             "cycle_count",            None,                         None,                          SensorStateClass.TOTAL_INCREASING, "mdi:battery-sync",           None, None),
     ("usableKwh",              "usable_kwh",             UnitOfEnergy.KILO_WATT_HOUR,  SensorDeviceClass.ENERGY,      None,                              "mdi:battery-heart",          None, None),
     ("remainingKwh",           "remaining_kwh",          UnitOfEnergy.KILO_WATT_HOUR,  SensorDeviceClass.ENERGY,      None,                              "mdi:battery-charging",       None, None),
+    # Tower Alarm-Bits (Boolean, Diagnostic)
+    ("alarmSpreadV",           "alarm_spread_v",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
+    ("alarmSpreadT",           "alarm_spread_t",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
+    ("alarmInsul",             "alarm_insul",            None,                         None,                          None,                              "mdi:shield-alert",           None, _D),
+    ("alarmAfe",               "alarm_afe",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, _D),
+    ("alarmBms",               "alarm_bms",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, _D),
+    ("alarmSys",               "alarm_sys",              None,                         None,                          None,                              "mdi:alert",                  None, _D),
+    ("alarmTotal",             "alarm_total_tower",      None,                         None,                          None,                              "mdi:alert",                  None, _D),
+    # Tower Alarm-Bits (Boolean)
+    ("alSpreadV",              "alarm_spread_v",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
+    ("alSpreadT",              "alarm_spread_t",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
+    ("alInsul",                "alarm_insul",            None,                         None,                          None,                              "mdi:shield-alert",           None, None),
+    ("alAfe",                  "alarm_afe",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, None),
+    ("alBms",                  "alarm_bms",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, None),
+    ("alSys",                  "alarm_sys",              None,                         None,                          None,                              "mdi:alert",                  None, None),
     ("tempMosfet",             "temp_mosfet",            UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMax",             "temp_bms_max",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMin",             "temp_bms_min",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("alarmStatus1",           "alarm_status_1",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
     ("alarmStatus2",           "alarm_status_2",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
     ("alarmTotal",             "alarm_total",            None,                         None,                          None,                              "mdi:alert",                  None, None),
+    # ── Tower Alarm-Bits (Boolean) ───────────────────────────────────────────
+    ("alarmSpreadV",   "alarm_spread_v",    None, None, None, "mdi:alert-circle-outline", None, None),
+    ("alarmSpreadT",   "alarm_spread_t",    None, None, None, "mdi:alert-circle-outline", None, None),
+    ("alarmInsul",     "alarm_insul",       None, None, None, "mdi:shield-alert",         None, None),
+    ("alarmAfe",       "alarm_afe",         None, None, None, "mdi:lan-disconnect",       None, None),
+    ("alarmBms",       "alarm_bms",         None, None, None, "mdi:alert",                None, None),
+    ("alarmSys",       "alarm_sys",         None, None, None, "mdi:alert",                None, None),
     # ── Diagnose ─────────────────────────────────────────────────────────────
     ("createTime",             "last_update",            None,                         None,                          None,                              "mdi:clock-outline",          None, _D),
     ("batteryCapacity",        "battery_capacity",       UnitOfEnergy.KILO_WATT_HOUR,  SensorDeviceClass.ENERGY,      None,                              "mdi:battery",                None, _D),
@@ -77,6 +99,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         new_entities = []
         for mid in new_mids:
             known_module_ids.add(mid)
+            mod = module_data[mid]
             for data_key, trans_key, unit, dev_cls, state_cls, icon, precision in MODULE_SENSORS:
                 new_entities.append(
                     DynessModuleSensor(
@@ -84,6 +107,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         unit, dev_cls, state_cls, icon, precision,
                     )
                 )
+            # Individuelle Zellspannungen — nur für vorhandene Zellen registrieren
+            # Standardmäßig deaktiviert (entity_registry_enabled_default=False)
+            for data_key, trans_key, unit, dev_cls, state_cls, icon, precision in _CELL_SENSORS:
+                if mod.get(data_key) is not None:
+                    new_entities.append(
+                        DynessModuleSensor(
+                            coordinator, entry, mid, data_key, trans_key,
+                            unit, dev_cls, state_cls, icon, precision,
+                            enabled_default=False,
+                        )
+                    )
         if new_entities:
             async_add_entities(new_entities)
 
@@ -134,19 +168,33 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
 
 # ── Modul-Sensoren (pro Sub-Modul dynamisch registriert) ─────────────────────
 # (data_key, translation_key, unit, device_class, state_class, icon, precision)
+# Individuelle Zellspannungs-Sensoren (standardmäßig deaktiviert — in HA UI aktivierbar)
+_CELL_SENSORS = [
+    (f"cell_{i:02d}", f"module_cell_{i:02d}",
+     UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,
+     SensorStateClass.MEASUREMENT, "mdi:battery-outline", 3)
+    for i in range(1, 31)
+]
+
 MODULE_SENSORS = [
-    ("soc",                  "module_soc",            PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-high",          None),
-    ("soh",                  "module_soh",            PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-heart",         None),
-    ("cycle_count",          "module_cycle_count",    None,                         None,                          SensorStateClass.TOTAL_INCREASING, "mdi:battery-sync",          None),
-    ("cell_voltage_max",     "module_cell_v_max",     UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",             3),
-    ("cell_voltage_min",     "module_cell_v_min",     UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",             3),
-    ("cell_voltage_spread_mv","module_cell_spread",   "mV",                         None,                          SensorStateClass.MEASUREMENT,      "mdi:arrow-expand-horizontal",1),
-    ("bms_temp",             "module_temp_bms",       UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",           None),
-    ("cell_temp_1",          "module_temp_1",         UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",           None),
-    ("cell_temp_2",          "module_temp_2",         UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",           None),
-    ("voltage",              "module_voltage",        UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",             3),
-    ("current",              "module_current",        UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-dc",            None),
-    ("has_alarm",            "module_alarm",          None,                         None,                          None,                              "mdi:alert-circle",          None),
+    ("soc",                   "module_soc",           PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-high",           None),
+    ("soh",                   "module_soh",           PERCENTAGE,                   SensorDeviceClass.BATTERY,     SensorStateClass.MEASUREMENT,      "mdi:battery-heart",          None),
+    ("cycle_count",           "module_cycle_count",   None,                         None,                          SensorStateClass.TOTAL_INCREASING, "mdi:battery-sync",           None),
+    ("cell_voltage_max",      "module_cell_v_max",    UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              3),
+    ("cell_voltage_min",      "module_cell_v_min",    UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              3),
+    ("cell_voltage_spread_mv","module_cell_spread",   "mV",                         None,                          SensorStateClass.MEASUREMENT,      "mdi:arrow-expand-horizontal", 1),
+    ("bms_temp",              "module_temp_bms",      UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
+    ("cell_temp_1",           "module_temp_1",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
+    ("cell_temp_2",           "module_temp_2",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
+    ("voltage",               "module_voltage",       UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              3),
+    ("current",               "module_current",       UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-dc",             None),
+    ("has_alarm",             "module_alarm",         None,                         None,                          None,                              "mdi:alert-circle",           None),
+] + [
+    # Individuelle Zellspannungen (Tower: cell_01-30, DL5.0C: cell_01-16)
+    # Standardmäßig deaktiviert — in HA UI aktivierbar
+    (f"cell_{i:02d}", f"module_cell_{i:02d}", UnitOfElectricPotential.VOLT,
+     SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, "mdi:battery-outline", 3)
+    for i in range(1, 31)
 ]
 
 
@@ -154,17 +202,19 @@ class DynessModuleSensor(CoordinatorEntity, SensorEntity):
     """Sensor für ein einzelnes Sub-Modul."""
 
     def __init__(self, coordinator, entry, module_id, data_key,
-                 translation_key, unit, device_class, state_class, icon, precision=None):
+                 translation_key, unit, device_class, state_class, icon,
+                 precision=None, enabled_default=True):
         super().__init__(coordinator)
         self._module_id   = module_id
         self._data_key    = data_key
-        self._attr_translation_key            = translation_key
-        self._attr_unique_id                  = f"{entry.entry_id}_{module_id}_{data_key}"
-        self._attr_native_unit_of_measurement = unit
-        self._attr_device_class               = device_class
-        self._attr_state_class                = state_class
-        self._attr_has_entity_name            = True
-        self._attr_icon                       = icon
+        self._attr_translation_key                 = translation_key
+        self._attr_unique_id                       = f"{entry.entry_id}_{module_id}_{data_key}"
+        self._attr_native_unit_of_measurement      = unit
+        self._attr_device_class                    = device_class
+        self._attr_state_class                     = state_class
+        self._attr_has_entity_name                 = True
+        self._attr_icon                            = icon
+        self._attr_entity_registry_enabled_default = enabled_default
         if precision is not None:
             self._attr_suggested_display_precision = precision
 

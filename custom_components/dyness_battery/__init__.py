@@ -418,10 +418,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["cellVoltageMin"]         = rt.get("2700")
                         data["cycleCount"]             = rt.get("1800")
                         data["energyChargeTotal"]      = rt.get("1900")
-                        # Point 1600 = verbleibende Kapazität kWh (direkt vom Tower geliefert)
+                        # Point 1600 = verbleibende Kapazität kWh (direkt vom Tower)
                         tower_remaining = _to_float(rt.get("1600"))
                         if tower_remaining is not None and tower_remaining > 0:
                             data["remainingKwh"] = tower_remaining
+                        # Alarm-Bits als Boolean-Sensoren (Tower T14 verifiziert)
+                        data["alarmSpreadV"]  = str(rt.get("5001", "0")) == "1"
+                        data["alarmSpreadT"]  = str(rt.get("5002", "0")) == "1"
+                        data["alarmInsul"]    = str(rt.get("5003", "0")) == "1"
+                        data["alarmAfe"]      = str(rt.get("5101", "0")) == "1"
+                        data["alarmBms"]      = str(rt.get("5102", "0")) == "1"
+                        data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
+                        data["alarmTotal"]    = rt.get("9999999")
 
                     # ── Temperatur-Logik ─────────────────────────────────────
                     # Wenn tempMax == tempMin → nur tempMax behalten (ein Sensor)
@@ -489,58 +497,57 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
 
 def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
-    """Parst Sub-Modul Datenpunkte (DL5.0C Modul-Schema).
-    
-    Verifizierte Point-IDs aus echten DL5.0C Logs:
-      10300-11800 (Schritte 100) = Zellspannungen Cell 1-16
-      12400 = BMS Board Temperatur
-      12500 = Zelltemperatur Avg Cell 1-4
-      12600 = Zelltemperatur Avg Cell 5-8
-      13400 = Strom (A)
-      13500 = Modulspannung (V)
-      13600 = Verbleibende Kapazität (Ah)
-      13800 = Gesamtkapazität (Ah)
-      13900 = Ladezyklen
-      14000 = SOC % (Remain capacity 2)
-      14100 = SOH % (Module total capacity 2)
-      14300-15200+ = Zell-Fehlercodes (0 = OK)
+    """Parst Sub-Modul Datenpunkte.
+
+    Smart Detection:
+    - Tower T14:  Point 11200 vorhanden → 30 Zellen (11200-14100, Schritte 100)
+    - DL5.0C:    Point 10300 vorhanden → 16 Zellen (10300-11800, Schritte 100)
     """
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
 
-    d = {
-        "sn":           sn,
-        "module_id":    mid,
-        "soc":          _to_float(g("14000")),   # SOC % — Remain capacity 2
-        "soh":          _to_float(g("14100")),   # SOH % — Module total capacity 2
-        "cycle_count":  _to_float(g("13900")),   # Ladezyklen
-        "remain_ah":    _to_float(g("13600")),   # Verbleibende Kapazität Ah
-        "total_ah":     _to_float(g("13800")),   # Gesamtkapazität Ah
-        "bms_temp":     _to_float(g("12400")),   # BMS Board Temperatur °C
-        "cell_temp_1":  _to_float(g("12500")),   # Avg Temp Cell 1-4 °C
-        "cell_temp_2":  _to_float(g("12600")),   # Avg Temp Cell 5-8 °C
-        "voltage":      _to_float(g("13500")),   # Modulspannung V
-        "current":      _to_float(g("13400")),   # Strom A
-    }
+    d = {"sn": sn, "module_id": mid}
+    is_tower = pts.get("11200") is not None
+    is_dl5   = pts.get("10300") is not None and not is_tower
 
-    # Zellspannungen sammeln für Max/Min (10300, 10400, ... 11800)
-    cells = []
-    for i in range(1, 17):
-        pid = str(10200 + i * 100)
-        v = _to_float(pts.get(pid))
-        if v is not None and v > 0:
-            cells.append(v)
+    if is_tower:
+        # Tower T14: 30 Zellen, Points 11200-14100
+        d["cell_temp_1"] = _to_float(g("14300"))
+        d["cell_temp_2"] = _to_float(g("14400"))
+        cells = []
+        for i in range(1, 31):
+            pid = str(11100 + i * 100)
+            v = _to_float(pts.get(pid))
+            d[f"cell_{i:02d}"] = v
+            if v is not None and v > 0:
+                cells.append(v)
+
+    elif is_dl5:
+        # DL5.0C: 16 Zellen, Points 10300-11800
+        d["soc"]         = _to_float(g("14000"))
+        d["soh"]         = _to_float(g("14100"))
+        d["cycle_count"] = _to_float(g("13900"))
+        d["remain_ah"]   = _to_float(g("13600"))
+        d["total_ah"]    = _to_float(g("13800"))
+        d["bms_temp"]    = _to_float(g("12400"))
+        d["cell_temp_1"] = _to_float(g("12500"))
+        d["cell_temp_2"] = _to_float(g("12600"))
+        d["voltage"]     = _to_float(g("13500"))
+        d["current"]     = _to_float(g("13400"))
+        cells = []
+        for i in range(1, 17):
+            pid = str(10200 + i * 100)
+            v = _to_float(pts.get(pid))
+            d[f"cell_{i:02d}"] = v
+            if v is not None and v > 0:
+                cells.append(v)
+        alarm = any(int(pts.get(str(14300 + i * 100)) or 0) != 0 for i in range(16))
+        d["has_alarm"] = alarm
+    else:
+        cells = []
+
     if cells:
         d["cell_voltage_max"]       = max(cells)
         d["cell_voltage_min"]       = min(cells)
         d["cell_voltage_spread_mv"] = round((max(cells) - min(cells)) * 1000, 1)
-
-    # Alarm: Zell-Fehlercodes 14300-15200+ prüfen (je 16 Zellen = 16 Points à 100)
-    alarm = False
-    for i in range(16):
-        pid = str(14300 + i * 100)
-        if int(pts.get(pid) or 0) != 0:
-            alarm = True
-            break
-    d["has_alarm"] = alarm
 
     return d

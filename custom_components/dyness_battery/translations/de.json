@@ -135,6 +135,117 @@
       },
       "module_alarm": {
         "name": "Alarmstatus"
+      },
+      "alarm_spread_v": {
+        "name": "Alarm: Spannungsdifferenz"
+      },
+      "alarm_spread_t": {
+        "name": "Alarm: Temperaturdifferenz"
+      },
+      "alarm_insul": {
+        "name": "Alarm: Niedrige Isolation"
+      },
+      "alarm_afe": {
+        "name": "Alarm: AFE Kommunikation"
+      },
+      "alarm_bms": {
+        "name": "Alarm: BMS Kommunikation"
+      },
+      "alarm_sys": {
+        "name": "Alarm: Systemfehler"
+      },
+      "module_cell_01": {
+        "name": "Zelle 01"
+      },
+      "module_cell_02": {
+        "name": "Zelle 02"
+      },
+      "module_cell_03": {
+        "name": "Zelle 03"
+      },
+      "module_cell_04": {
+        "name": "Zelle 04"
+      },
+      "module_cell_05": {
+        "name": "Zelle 05"
+      },
+      "module_cell_06": {
+        "name": "Zelle 06"
+      },
+      "module_cell_07": {
+        "name": "Zelle 07"
+      },
+      "module_cell_08": {
+        "name": "Zelle 08"
+      },
+      "module_cell_09": {
+        "name": "Zelle 09"
+      },
+      "module_cell_10": {
+        "name": "Zelle 10"
+      },
+      "module_cell_11": {
+        "name": "Zelle 11"
+      },
+      "module_cell_12": {
+        "name": "Zelle 12"
+      },
+      "module_cell_13": {
+        "name": "Zelle 13"
+      },
+      "module_cell_14": {
+        "name": "Zelle 14"
+      },
+      "module_cell_15": {
+        "name": "Zelle 15"
+      },
+      "module_cell_16": {
+        "name": "Zelle 16"
+      },
+      "module_cell_17": {
+        "name": "Zelle 17"
+      },
+      "module_cell_18": {
+        "name": "Zelle 18"
+      },
+      "module_cell_19": {
+        "name": "Zelle 19"
+      },
+      "module_cell_20": {
+        "name": "Zelle 20"
+      },
+      "module_cell_21": {
+        "name": "Zelle 21"
+      },
+      "module_cell_22": {
+        "name": "Zelle 22"
+      },
+      "module_cell_23": {
+        "name": "Zelle 23"
+      },
+      "module_cell_24": {
+        "name": "Zelle 24"
+      },
+      "module_cell_25": {
+        "name": "Zelle 25"
+      },
+      "module_cell_26": {
+        "name": "Zelle 26"
+      },
+      "module_cell_27": {
+        "name": "Zelle 27"
+      },
+      "module_cell_28": {
+        "name": "Zelle 28"
+      },
+      "module_cell_29": {
+        "name": "Zelle 29"
+      },
+      "module_cell_30": {
+        "name": "Zelle 30"
+      },
+      "alarm_total_tower": {
+        "name": "Alarmstatus"
       }
     }
   }

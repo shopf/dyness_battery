@@ -19,6 +19,7 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 |-------|--------|
 | Dyness Junior Box | ✅ Getestet |
 | Dyness Tower (non-pro) | ✅ Sollte funktionieren (Community-getestet) |
+| Dyness Tower T14 | ✅ Sollte funktionieren (Community-getestet) |
 | Dyness DL5.0C | ✅ Sollte funktionieren (Community-getestet) |
 | Dyness PowerHaus | ✅ Sollte funktionieren (Community-getestet) |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
@@ -47,10 +48,10 @@ Zusätzliche Sensoren werden automatisch aktiviert, sofern das Gerät die Daten 
 | Zellspannung Max | Höchste Einzelzellspannung | V | ✅ | ✅ | ✅ | ✅ |
 | Zellspannung Min | Niedrigste Einzelzellspannung | V | ✅ | ✅ | ✅ | ✅ |
 | Zellspannungsdifferenz | Max − Min Zellspannung (Gesundheitsindikator) | mV | ✅ | ✅ | ✅ | ✅ |
-| Heute geladen | Geladene Energie heute | kWh | ✅ | – | ✅ | ✅ |
-| Heute entladen | Entladene Energie heute | kWh | ✅ | – | ✅ | ✅ |
-| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ | ✅ | ✅ |
-| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – | ✅ | ✅ |
+| Heute geladen | Geladene Energie heute | kWh | ✅ | – | ✅ | – |
+| Heute entladen | Entladene Energie heute | kWh | ✅ | – | ✅ | – |
+| Gesamt geladen | Kumuliert geladene Energie | kWh | ✅ | ✅ | ✅ | – |
+| Gesamt entladen | Kumuliert entladene Energie | kWh | ✅ | – | ✅ | – |
 | Ladezyklen | Anzahl Batteriezyklen | – | – | ✅ | – | ✅ |
 | Nutzbare Kapazität | Kapazität × SOH | kWh | ✅ | ✅ | ✅ | ✅ |
 | Verbleibende Energie | Nutzbare Kapazität × SOC | kWh | ✅ | ✅ | ✅ | ✅ |
@@ -151,6 +152,7 @@ Du hast ein anderes Dyness-Modell mit WiFi-Dongle und möchtest es testen? Erste
 |--------|--------|
 | Dyness Junior Box | ✅ Tested |
 | Dyness Tower (non-pro) | ✅ Should work (community-tested) |
+| Dyness Tower T14 | ✅ Should work (community-tested) |
 | Dyness DL5.0C | ✅ Should work (community-tested) |
 | Dyness PowerHaus | ✅ Should work (community-tested) |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
@@ -179,10 +181,10 @@ Additional sensors are automatically enabled if the device provides the data:
 | Cell Voltage Max | Highest individual cell voltage | V | ✅ | ✅ | ✅ | ✅ |
 | Cell Voltage Min | Lowest individual cell voltage | V | ✅ | ✅ | ✅ | ✅ |
 | Cell Voltage Spread | Max − Min cell voltage (health indicator) | mV | ✅ | ✅ | ✅ | ✅ |
-| Energy Charged Today | Energy charged today | kWh | ✅ | – | ✅ | ✅ |
-| Energy Discharged Today | Energy discharged today | kWh | ✅ | – | ✅ | ✅ |
-| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ | ✅ | ✅ |
-| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – | ✅ | ✅ |
+| Energy Charged Today | Energy charged today | kWh | ✅ | – | ✅ | – |
+| Energy Discharged Today | Energy discharged today | kWh | ✅ | – | ✅ | – |
+| Energy Charged Total | Cumulative energy charged | kWh | ✅ | ✅ | ✅ | – |
+| Energy Discharged Total | Cumulative energy discharged | kWh | ✅ | – | ✅ | – |
 | Cycle Count | Number of charge cycles | – | – | ✅ | – | ✅ |
 | Usable Capacity | Capacity × SOH | kWh | ✅ | ✅ | ✅ | ✅ |
 | Energy Remaining | Usable capacity × SOC | kWh | ✅ | ✅ | ✅ | ✅ |
@@ -291,6 +293,13 @@ Pull requests and issues are welcome! Especially needed:
 | 💬 **Questions & Ideas** | [GitHub Discussions](https://github.com/shopf/dyness_battery/discussions) |
 | 🐛 **Bug Reports** | [GitHub Issues](https://github.com/shopf/dyness_battery/issues) |
 | 🔌 **New Device** | Open an Issue with your `dyness_test.py` output |
+
+---
+
+## Translations
+
+Additional languages supported:
+1. 🇫🇷 French — contributed by the community
 
 ---
 
