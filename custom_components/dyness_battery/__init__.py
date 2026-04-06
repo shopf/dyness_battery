@@ -506,8 +506,14 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
 
     d = {"sn": sn, "module_id": mid}
-    is_tower = pts.get("11200") is not None
-    is_dl5   = pts.get("10300") is not None and not is_tower
+    # Tower T14 Sub-Module haben Point 10000 NICHT (keine eigene Modul-SN im Schema)
+    # DL5.0C Sub-Module haben Point 10000 (eigene Modul-SN)
+    # Zusätzlich: DL5.0C hat Points 10300-11800 (16 Zellen), Tower hat 11200-14100 (30 Zellen)
+    # Da DL5.0C Point 11200 = Cell 10 hat, reicht pts.get("11200") nicht zur Unterscheidung!
+    # Sicherer Check: Tower erkennen via Point 10000 FEHLT und Point 11200 vorhanden
+    has_module_sn = pts.get("10000") is not None  # DL5.0C hat eigene Modul-SN
+    is_tower = not has_module_sn and pts.get("11200") is not None
+    is_dl5   = has_module_sn and pts.get("10300") is not None
 
     if is_tower:
         # Tower T14: 30 Zellen, Points 11200-14100
