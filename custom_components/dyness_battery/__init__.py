@@ -288,31 +288,29 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             _LOGGER.debug("Dyness realTime/data: %d Punkte", len(self.realtime_data))
 
                             # ── Sub-Modul Discovery via SUB Point ─────────────
-                            if not self._module_sns:
-                                sub_raw = self.realtime_data.get("SUB", "")
-                                if sub_raw:
-                                    candidates = [s.strip() for s in str(sub_raw).split(",") if s.strip()]
-                                    # BMS/BDU-SNs und Tower Sub-Module (-BDU-01 etc.) ausschließen
-                                    # Tower Sub-Module haben Format: XXXX-BDU-01, XXXX-BDU-02 etc.
-                                    import re
-                                    candidates = [
-                                        s for s in candidates
-                                        if not s.endswith(_BMS_SUFFIXES)
-                                        and not re.search(r'-BDU-\d+$', s)
-                                    ]
-                                    # Nur bei mehreren DL5.0C-artigen Modulen extra API-Calls machen
-                                    if len(candidates) > 1:
-                                        self._module_sns = candidates
+                            # Sub-Modul Discovery — bei jedem Update prüfen ob neue Module dazugekommen sind
+                            sub_raw = self.realtime_data.get("SUB", "")
+                            if sub_raw:
+                                import re
+                                candidates = [s.strip() for s in str(sub_raw).split(",") if s.strip()]
+                                candidates = [
+                                    s for s in candidates
+                                    if not s.endswith(_BMS_SUFFIXES)
+                                    and not re.search(r'-BDU-\d+$', s)
+                                ]
+                                if len(candidates) > 1:
+                                    if set(candidates) != set(self._module_sns):
                                         _LOGGER.info(
-                                            "Dyness: %d Sub-Modul(e) entdeckt: %s",
-                                            len(self._module_sns), self._module_sns
+                                            "Dyness: Sub-Module aktualisiert: %s → %s",
+                                            self._module_sns, candidates
                                         )
+                                        self._module_sns = candidates
                                         self._update_scan_interval()
-                                    else:
-                                        _LOGGER.debug(
-                                            "Dyness: Kein Multi-Modul Setup erkannt (%s)",
-                                            candidates
-                                        )
+                                elif not self._module_sns:
+                                    _LOGGER.debug(
+                                        "Dyness: Einzelnes Sub-Modul — kein separater Abruf (%s)",
+                                        candidates
+                                    )
                         else:
                             _LOGGER.debug(
                                 "Dyness realTime/data: Code %s – %s",
