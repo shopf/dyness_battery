@@ -132,6 +132,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self.module_data: dict[str, dict] = {}  # mid → Sensordaten
 
         self._bound: bool = False
+        self._bound_sns: set = set()  # Bereits gebundene Sub-Modul SNs
         self._module_sns: list[str] = []
         self._last_call_time: float = 0.0
 
@@ -323,6 +324,21 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     new_module_data: dict[str, dict] = {}
                     for sn in self._module_sns:
                         try:
+                            # Sub-Modul binden falls noch nicht gebunden
+                            if sn not in self._bound_sns:
+                                bind_res = await self._call(
+                                    session, "/v1/device/bindSn", {"deviceSn": sn}
+                                )
+                                bind_code = str(bind_res.get("code", ""))
+                                if bind_code in ("0", "200", "500") or bind_res.get("code") in (0, 500):
+                                    self._bound_sns.add(sn)
+                                    _LOGGER.info("Dyness Sub-Modul gebunden: %s", sn)
+                                else:
+                                    _LOGGER.warning(
+                                        "Dyness Sub-Modul Binding fehlgeschlagen: %s Code %s",
+                                        sn, bind_code
+                                    )
+                                    continue  # Abruf überspringen wenn Binding fehlschlägt
                             m_result = await self._call(
                                 session, "/v1/device/realTime/data", {"deviceSn": sn}
                             )
