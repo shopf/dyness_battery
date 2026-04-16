@@ -53,10 +53,10 @@
         "name": "Différence de tension"
       },
       "charge_current_limit": {
-        "name": "Limite courant de charge"
+        "name": "Courant de charge max."
       },
       "discharge_current_limit": {
-        "name": "Limite courant de décharge"
+        "name": "Courant de décharge max."
       },
       "energy_charge_day": {
         "name": "Energie chargée aujourd'hui"

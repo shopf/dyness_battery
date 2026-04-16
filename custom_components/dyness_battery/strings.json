@@ -201,6 +201,12 @@
       },
       "alarm_total_tower": {
         "name": "Alarm Status"
+      },
+      "charge_current_limit": {
+        "name": "Max Charge Current"
+      },
+      "discharge_current_limit": {
+        "name": "Max Discharge Current"
       }
     }
   },
@@ -208,25 +214,27 @@
     "step": {
       "user": {
         "title": "Dyness Battery",
-        "description": "Enter your Dyness API credentials. The device will be discovered automatically.\n\nIf auto-discovery fails, use [manual setup]({manual_link}) to enter serial numbers.",
+        "description": "Enter your Dyness API credentials. Select your region and the device will be discovered automatically.",
         "data": {
           "api_id": "API ID",
-          "api_secret": "API Secret"
+          "api_secret": "API Secret",
+          "region": "Region"
         }
       },
       "manual": {
         "title": "Dyness Battery – Manual Setup",
-        "description": "Enter your API credentials and device serial numbers. Find them in the Dyness app under Device Management.",
+        "description": "Enter your API credentials, region and device serial numbers.",
         "data": {
           "api_id": "API ID",
           "api_secret": "API Secret",
+          "region": "Region",
           "device_sn": "Battery SN (e.g. R07ABCDEF123456-BMS)",
-          "dongle_sn": "Dongle SN (optional, e.g. R07ABCDEF123456)"
+          "dongle_sn": "Dongle SN (optional)"
         }
       }
     },
     "error": {
-      "discovery_failed": "Could not discover device automatically. Please use manual setup below."
+      "discovery_failed": "Could not discover device automatically. Please use manual setup."
     }
   }
 }

@@ -53,10 +53,10 @@
         "name": "Cell Voltage Spread"
       },
       "charge_current_limit": {
-        "name": "Charge Current Limit"
+        "name": "Max Charge Current"
       },
       "discharge_current_limit": {
-        "name": "Discharge Current Limit"
+        "name": "Max Discharge Current"
       },
       "energy_charge_day": {
         "name": "Energy Charged Today"

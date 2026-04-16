@@ -423,6 +423,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["alarmStatus1"]           = rt.get("3200")
                         data["alarmStatus2"]           = rt.get("3300")
                         data["alarmTotal"]             = rt.get("4100")
+                        # Max Lade-/Entladestrom — nur bei Multi-Modul Geräten (DL5.0C etc.)
+                        # Junior Box / PowerHaus liefern unzuverlässige Werte (nicht konform mit Datenblatt)
+                        if len(self._module_sns) > 0:
+                            cl = _to_float(rt.get("3800"))
+                            dl = _to_float(rt.get("3900"))
+                            if cl is not None and cl > 0:
+                                data["chargeCurrentLimit"] = cl
+                            if dl is not None and dl > 0:
+                                data["dischargeCurrentLimit"] = dl
                     elif "1400" in rt:
                         # Tower Schema
                         data["soh"]                   = rt.get("1500")
@@ -542,9 +551,12 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
                 cells.append(v)
 
     elif is_dl5:
-        # DL5.0C: 16 Zellen, Points 10300-11800
-        d["soc"]         = _to_float(g("14000"))
-        d["soh"]         = _to_float(g("14100"))
+        # DL5.0C / PowerBox Pro: 16 Zellen, Points 10300-11800
+        # SOC/SOH nur wenn plausibel (≤ 100%) — PowerBox Pro liefert hier andere Werte
+        soc_raw = _to_float(g("14000"))
+        soh_raw = _to_float(g("14100"))
+        d["soc"] = soc_raw if soc_raw is not None and soc_raw <= 100 else None
+        d["soh"] = soh_raw if soh_raw is not None and soh_raw <= 100 else None
         d["cycle_count"] = _to_float(g("13900"))
         d["remain_ah"]   = _to_float(g("13600"))
         d["total_ah"]    = _to_float(g("13800"))

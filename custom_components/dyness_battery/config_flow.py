@@ -4,15 +4,19 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
-from . import DOMAIN, _BMS_SUFFIXES, _is_success, _MIN_CALL_INTERVAL
-import asyncio
+from . import DOMAIN, _BMS_SUFFIXES, _is_success
 import hashlib
 import hmac
 import base64
 import json
-import time
 import aiohttp
 from email.utils import formatdate
+
+# API Domains je Region
+API_REGIONS = {
+    "europe": "https://open-api.dyness.com",
+    "apac":   "https://apacopen-api.dyness.com",
+}
 
 
 def _build_headers_cf(api_id, api_secret, body, path):
@@ -30,14 +34,18 @@ def _build_headers_cf(api_id, api_secret, body, path):
     }
 
 
-async def _discover_device_sn(api_id: str, api_secret: str) -> str | None:
+async def _discover_device_sn(api_id: str, api_secret: str, api_base: str) -> str | None:
     """Versucht BMS SN automatisch zu ermitteln."""
-    url = "https://open-api.dyness.com/openapi/ems-device/v1/device/storage/list"
+    path = "/v1/device/storage/list"
+    url = f"{api_base}/openapi/ems-device{path}"
     body = "{}"
-    headers = _build_headers_cf(api_id, api_secret, body, "/v1/device/storage/list")
+    headers = _build_headers_cf(api_id, api_secret, body, path)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, data=body, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.post(
+                url, headers=headers, data=body,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 result = await resp.json(content_type=None)
                 if _is_success(result):
                     device_list = (result.get("data", {}) or {}).get("list", [])
@@ -56,6 +64,7 @@ async def _discover_device_sn(api_id: str, api_secret: str) -> str | None:
 STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Required("api_id"): str,
     vol.Required("api_secret"): str,
+    vol.Required("region", default="europe"): vol.In(["europe", "apac"]),
 })
 
 
@@ -67,33 +76,30 @@ class DynessConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self):
         self._api_id = None
         self._api_secret = None
-        self._discovered_sn = None
+        self._api_base = None
 
     async def async_step_user(self, user_input=None) -> FlowResult:
-        """Schritt 1: API-Zugangsdaten + Auto-Discovery."""
+        """Schritt 1: API-Zugangsdaten + Region + Auto-Discovery."""
         errors = {}
 
         if user_input is not None:
             self._api_id = user_input["api_id"]
             self._api_secret = user_input["api_secret"]
+            self._api_base = API_REGIONS[user_input["region"]]
 
-            # Auto-Discovery versuchen
-            sn = await _discover_device_sn(self._api_id, self._api_secret)
+            sn = await _discover_device_sn(self._api_id, self._api_secret, self._api_base)
             if sn:
-                self._discovered_sn = sn
-                # SN-basierte unique_id — verhindert doppelte Einträge für dasselbe Gerät
                 await self.async_set_unique_id(f"{self._api_id}_{sn}")
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title="Dyness Battery",
                     data={
-                        "api_id": self._api_id,
+                        "api_id":     self._api_id,
                         "api_secret": self._api_secret,
-                        "api_base": "https://open-api.dyness.com",
+                        "api_base":   self._api_base,
                     }
                 )
             else:
-                # Discovery fehlgeschlagen → manueller Fallback
                 errors["base"] = "discovery_failed"
 
         return self.async_show_form(
@@ -103,27 +109,29 @@ class DynessConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_manual(self, user_input=None) -> FlowResult:
-        """Schritt 2 (Fallback): Manuelle Eingabe der Seriennummern."""
+        """Schritt 2 (Fallback): Manuelle SN-Eingabe."""
         errors = {}
 
         if user_input is not None:
             sn = user_input["device_sn"]
+            region = user_input.get("region", "europe")
             await self.async_set_unique_id(f"{user_input['api_id']}_{sn}")
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title="Dyness Battery",
                 data={
-                    "api_id": user_input["api_id"],
+                    "api_id":     user_input["api_id"],
                     "api_secret": user_input["api_secret"],
-                    "api_base": "https://open-api.dyness.com",
-                    "device_sn": sn,
-                    "dongle_sn": user_input.get("dongle_sn") or None,
+                    "api_base":   API_REGIONS.get(region, API_REGIONS["europe"]),
+                    "device_sn":  sn,
+                    "dongle_sn":  user_input.get("dongle_sn") or None,
                 }
             )
 
         schema = vol.Schema({
             vol.Required("api_id", default=self._api_id or ""): str,
             vol.Required("api_secret", default=self._api_secret or ""): str,
+            vol.Required("region", default="europe"): vol.In(["europe", "apac"]),
             vol.Required("device_sn"): str,
             vol.Optional("dongle_sn", default=""): str,
         })

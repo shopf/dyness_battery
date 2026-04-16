@@ -28,7 +28,8 @@ from email.utils import formatdate
 # ===== HIER DEINE ZUGANGSDATEN EINTRAGEN =====
 API_ID     = "DEINE_API_ID"
 API_SECRET = "DEIN_API_SECRET"
-API_BASE   = "https://open-api.dyness.com/openapi/ems-device"
+API_BASE   = "https://open-api.dyness.com/openapi/ems-device"       # 🌍 Europa (Standard)
+# API_BASE = "https://apacopen-api.dyness.com/openapi/ems-device"  # 🌏 Asia-Pacific
 
 # Optional: Wenn Auto-Discovery fehlschlägt, hier manuell eintragen
 DEVICE_SN  = ""   # z.B. R07ABCDEF123456XX-BMS  (leer lassen für Auto-Discovery)
