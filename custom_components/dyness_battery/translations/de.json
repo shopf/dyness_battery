@@ -246,6 +246,96 @@
       },
       "alarm_total_tower": {
         "name": "Alarmstatus"
+      },
+      "pv_power": {
+        "name": "PV-Leistung"
+      },
+      "load_power": {
+        "name": "Verbrauchsleistung"
+      },
+      "grid_power": {
+        "name": "Netzleistung"
+      },
+      "pv1_power": {
+        "name": "PV-String 1 Leistung"
+      },
+      "pv2_power": {
+        "name": "PV-String 2 Leistung"
+      },
+      "pv3_power": {
+        "name": "PV-String 3 Leistung"
+      },
+      "pv_energy_today": {
+        "name": "Heute PV-Ertrag"
+      },
+      "load_energy_today": {
+        "name": "Heute Verbrauch"
+      },
+      "grid_import_today": {
+        "name": "Heute Netzbezug"
+      },
+      "grid_export_today": {
+        "name": "Heute Netzeinspeisung"
+      },
+      "pv_energy_total": {
+        "name": "Gesamt PV-Ertrag"
+      },
+      "load_energy_total": {
+        "name": "Gesamt Verbrauch"
+      },
+      "grid_import_total": {
+        "name": "Gesamt Netzbezug"
+      },
+      "grid_export_total": {
+        "name": "Gesamt Netzeinspeisung"
+      },
+      "temp_internal": {
+        "name": "Wechselrichter Innentemperatur"
+      },
+      "temp_module": {
+        "name": "Wechselrichter Modultemperatur"
+      },
+      "temp_heat_sink": {
+        "name": "Wechselrichter Kühlkörpertemperatur"
+      },
+      "grid_status": {
+        "name": "Netzstatus"
+      },
+      "run_model": {
+        "name": "Betriebsmodus"
+      },
+      "inverter_work_status": {
+        "name": "Wechselrichter Betriebsstatus"
+      },
+      "grid_voltage": {
+        "name": "Netzspannung"
+      },
+      "grid_current": {
+        "name": "Netzstrom"
+      },
+      "grid_frequency": {
+        "name": "Netzfrequenz"
+      },
+      "bus_voltage": {
+        "name": "DC-Bus-Spannung"
+      },
+      "pv1_voltage": {
+        "name": "PV-String 1 Spannung"
+      },
+      "pv2_voltage": {
+        "name": "PV-String 2 Spannung"
+      },
+      "pv3_voltage": {
+        "name": "PV-String 3 Spannung"
+      },
+      "pv1_current": {
+        "name": "PV-String 1 Strom"
+      },
+      "pv2_current": {
+        "name": "PV-String 2 Strom"
+      },
+      "pv3_current": {
+        "name": "PV-String 3 Strom"
       }
     }
   }

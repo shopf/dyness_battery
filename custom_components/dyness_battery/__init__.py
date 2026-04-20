@@ -130,6 +130,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self.storage_info  = {}
         self.realtime_data = {}
         self.module_data: dict[str, dict] = {}  # mid → Sensordaten
+        self.running_data: dict = {}             # getLastRunningDataBySn
 
         self._bound: bool = False
         self._bound_sns: set = set()  # Bereits gebundene Sub-Modul SNs
@@ -359,6 +360,28 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     if new_module_data:
                         self.module_data = new_module_data
 
+                    # ── getLastRunningDataBySn (bei jedem Update) ─────────────
+                    try:
+                        run_body = {"deviceSn": self.device_sn}
+                        if self.dongle_sn:
+                            run_body["collectorSn"] = self.dongle_sn
+                        run_result = await self._call(
+                            session, "/v1/device/getLastRunningDataBySn", run_body
+                        )
+                        if _is_success(run_result):
+                            self.running_data = run_result.get("data", {}) or {}
+                            _LOGGER.debug(
+                                "Dyness getLastRunningDataBySn: %d Felder",
+                                len(self.running_data)
+                            )
+                        else:
+                            _LOGGER.debug(
+                                "Dyness getLastRunningDataBySn: Code %s – %s",
+                                run_result.get("code"), run_result.get("info")
+                            )
+                    except Exception as e:
+                        _LOGGER.warning("Dyness getLastRunningDataBySn nicht erreichbar: %s", e)
+
                     # ── Leistungsdaten (bei jedem Update) ────────────────────
                     body = {"pageNo": 1, "pageSize": 1, "deviceSn": self.device_sn}
                     if self.dongle_sn:
@@ -486,6 +509,91 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
                     except (ValueError, TypeError):
                         pass
+
+                    # ── getLastRunningDataBySn Felder ─────────────────────────
+                    rd = self.running_data
+                    if rd:
+                        _GRID_STATUS = {"0": "Off Grid", "1": "On Grid"}
+                        _RUN_MODE    = {"0": "Self-use", "1": "Feed-in Priority", "2": "Backup", "3": "Manual"}
+
+                        # Leistung
+                        for key, rdkey in [
+                            ("pvPower",       "pvPower"),
+                            ("loadPower",     "loadPower"),
+                            ("gridPower",     "activePower"),
+                            ("pv1Power",      "pv1Power"),
+                            ("pv2Power",      "pv2Power"),
+                            ("pv3Power",      "pv3Power"),
+                            ("pv4Power",      "pv4Power"),
+                        ]:
+                            v = _to_float(rd.get(rdkey))
+                            if v is not None:
+                                data[key] = v
+
+                        # Energie
+                        for key, rdkey in [
+                            ("pvEnergyToday",    "dayGeneration"),
+                            ("loadEnergyToday",  "dayElectricity"),
+                            ("gridImportToday",  "buyEnergy"),
+                            ("gridExportToday",  "sellEnergy"),
+                            ("pvEnergyTotal",    "totalGeneration"),
+                            ("loadEnergyTotal",  "totalElectricity"),
+                            ("gridImportTotal",  "totalBuyEnergy"),
+                            ("gridExportTotal",  "totalSellEnergy"),
+                        ]:
+                            v = _to_float(rd.get(rdkey))
+                            if v is not None:
+                                data[key] = v
+
+                        # Temperaturen Inverter
+                        for key, rdkey in [
+                            ("tempInternal",  "internalTemperature"),
+                            ("tempModule",    "moduleTemperature"),
+                            ("tempHeatSink",  "heatDissipationTemperature"),
+                        ]:
+                            v = _to_float(rd.get(rdkey))
+                            if v is not None:
+                                data[key] = v
+
+                        # Grid / Status
+                        data["gridStatus"]         = _GRID_STATUS.get(str(rd.get("gridStatus", "")), rd.get("gridStatus"))
+                        data["runModel"]           = _RUN_MODE.get(str(rd.get("runModel", "")), rd.get("runModel"))
+                        data["inverterWorkStatus"] = rd.get("workStatus")
+
+                        # Grid Messung
+                        for key, rdkey in [
+                            ("gridVoltage",   "rvoltage"),
+                            ("gridCurrent",   "rcurrent"),
+                            ("gridFrequency", "gridFrequencyR"),
+                            ("busVoltage",    "busVoltage"),
+                            ("pv1Voltage",    "pv1Voltage"),
+                            ("pv2Voltage",    "pv2Voltage"),
+                            ("pv3Voltage",    "pv3Voltage"),
+                            ("pv1Current",    "pv1Current"),
+                            ("pv2Current",    "pv2Current"),
+                            ("pv3Current",    "pv3Current"),
+                        ]:
+                            v = _to_float(rd.get(rdkey))
+                            if v is not None:
+                                data[key] = v
+
+                        # Charge/Discharge Limit aus running_data (zuverlässiger als Points 3800/3900)
+                        cl = _to_float(rd.get("chargingLimitCurrent"))
+                        dl = _to_float(rd.get("dischargeLimitCurrent"))
+                        if cl is not None and cl > 0:
+                            data["chargeCurrentLimit"]    = cl
+                        if dl is not None and dl > 0:
+                            data["dischargeCurrentLimit"] = dl
+
+                        # Fallback: SOC/Power aus running_data wenn getLastPowerDataBySn nichts liefert
+                        if data.get("soc") is None:
+                            soc_rd = rd.get("batterySoc")
+                            if soc_rd is not None:
+                                data["soc"] = str(soc_rd)
+                        if data.get("realTimePower") is None:
+                            bp = _to_float(rd.get("batteryPower"))
+                            if bp is not None:
+                                data["realTimePower"] = bp
 
                     # ── Modul-Daten anhängen ──────────────────────────────────
                     n_modules = max(len(self._module_sns), 1)

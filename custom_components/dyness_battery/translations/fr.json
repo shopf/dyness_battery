@@ -246,6 +246,96 @@
       },
       "alarm_total_tower": {
         "name": "Statut Alarme"
+      },
+      "pv_power": {
+        "name": "PV Power"
+      },
+      "load_power": {
+        "name": "Load Power"
+      },
+      "grid_power": {
+        "name": "Grid Power"
+      },
+      "pv1_power": {
+        "name": "PV String 1 Power"
+      },
+      "pv2_power": {
+        "name": "PV String 2 Power"
+      },
+      "pv3_power": {
+        "name": "PV String 3 Power"
+      },
+      "pv_energy_today": {
+        "name": "Today PV Yield"
+      },
+      "load_energy_today": {
+        "name": "Today Load Consumption"
+      },
+      "grid_import_today": {
+        "name": "Today Grid Import"
+      },
+      "grid_export_today": {
+        "name": "Today Grid Export"
+      },
+      "pv_energy_total": {
+        "name": "Total PV Yield"
+      },
+      "load_energy_total": {
+        "name": "Total Load Consumption"
+      },
+      "grid_import_total": {
+        "name": "Total Grid Import"
+      },
+      "grid_export_total": {
+        "name": "Total Grid Export"
+      },
+      "temp_internal": {
+        "name": "Inverter Internal Temperature"
+      },
+      "temp_module": {
+        "name": "Inverter Module Temperature"
+      },
+      "temp_heat_sink": {
+        "name": "Inverter Heat Sink Temperature"
+      },
+      "grid_status": {
+        "name": "Grid Status"
+      },
+      "run_model": {
+        "name": "Run Mode"
+      },
+      "inverter_work_status": {
+        "name": "Inverter Work Status"
+      },
+      "grid_voltage": {
+        "name": "Grid Voltage"
+      },
+      "grid_current": {
+        "name": "Grid Current"
+      },
+      "grid_frequency": {
+        "name": "Grid Frequency"
+      },
+      "bus_voltage": {
+        "name": "DC Bus Voltage"
+      },
+      "pv1_voltage": {
+        "name": "PV String 1 Voltage"
+      },
+      "pv2_voltage": {
+        "name": "PV String 2 Voltage"
+      },
+      "pv3_voltage": {
+        "name": "PV String 3 Voltage"
+      },
+      "pv1_current": {
+        "name": "PV String 1 Current"
+      },
+      "pv2_current": {
+        "name": "PV String 2 Current"
+      },
+      "pv3_current": {
+        "name": "PV String 3 Current"
       }
     }
   }

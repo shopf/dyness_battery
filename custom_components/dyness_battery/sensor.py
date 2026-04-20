@@ -2,7 +2,7 @@
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     PERCENTAGE, UnitOfPower, UnitOfElectricCurrent, UnitOfEnergy,
-    UnitOfTemperature, UnitOfElectricPotential,
+    UnitOfTemperature, UnitOfElectricPotential, UnitOfFrequency,
 )
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -36,6 +36,37 @@ SENSORS = [
     # Max Lade-/Entladestrom (Diagnostic)
     ("chargeCurrentLimit",     "charge_current_limit",   UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-ac",             None, _D),
     ("dischargeCurrentLimit",  "discharge_current_limit",UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-ac",             None, _D),
+    # Inverter / Hybrid Sensoren (aus getLastRunningDataBySn — nur wenn verfügbar)
+    ("pvPower",            "pv_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-power",            None, None),
+    ("loadPower",          "load_power",           UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:home-lightning-bolt",    None, None),
+    ("gridPower",          "grid_power",           UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:transmission-tower",     None, None),
+    ("pv1Power",           "pv1_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            None, None),
+    ("pv2Power",           "pv2_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            None, None),
+    ("pv3Power",           "pv3_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            None, None),
+    ("pvEnergyToday",      "pv_energy_today",      UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",            None, None),
+    ("loadEnergyToday",    "load_energy_today",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt",    None, None),
+    ("gridImportToday",    "grid_import_today",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower",     None, None),
+    ("gridExportToday",    "grid_export_today",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower",     None, None),
+    ("pvEnergyTotal",      "pv_energy_total",      UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:solar-power",            None, None),
+    ("loadEnergyTotal",    "load_energy_total",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-lightning-bolt",    None, None),
+    ("gridImportTotal",    "grid_import_total",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower",     None, None),
+    ("gridExportTotal",    "grid_export_total",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:transmission-tower",     None, None),
+    ("tempInternal",       "temp_internal",        UnitOfTemperature.CELSIUS,      SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, _D),
+    ("tempModule",         "temp_module",          UnitOfTemperature.CELSIUS,      SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, _D),
+    ("tempHeatSink",       "temp_heat_sink",       UnitOfTemperature.CELSIUS,      SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, _D),
+    ("gridStatus",         "grid_status",          None,                           None,                          None,                              "mdi:transmission-tower",     None, None),
+    ("runModel",           "run_model",            None,                           None,                          None,                              "mdi:cog",                    None, None),
+    ("inverterWorkStatus", "inverter_work_status", None,                           None,                          None,                              "mdi:home-battery",           None, _D),
+    ("gridVoltage",        "grid_voltage",         UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              1,    _D),
+    ("gridCurrent",        "grid_current",         UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-ac",             1,    _D),
+    ("gridFrequency",      "grid_frequency",       UnitOfFrequency.HERTZ,          SensorDeviceClass.FREQUENCY,   SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              2,    _D),
+    ("busVoltage",         "bus_voltage",          UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              1,    _D),
+    ("pv1Voltage",         "pv1_voltage",          UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
+    ("pv2Voltage",         "pv2_voltage",          UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
+    ("pv3Voltage",         "pv3_voltage",          UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
+    ("pv1Current",         "pv1_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
+    ("pv2Current",         "pv2_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
+    ("pv3Current",         "pv3_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
     # Tower Alarm-Bits (Boolean, Diagnostic)
     ("alarmSpreadV",           "alarm_spread_v",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
     ("alarmSpreadT",           "alarm_spread_t",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
