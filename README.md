@@ -22,6 +22,9 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Dyness Tower T14 | ✅ Sollte funktionieren (Community-getestet) |
 | Dyness DL5.0C | ✅ Sollte funktionieren (Community-getestet) |
 | Dyness PowerHaus | ✅ Sollte funktionieren (Community-getestet) |
+| Dyness Stack100 | ✅ Sollte funktionieren (Community-getestet) |
+| Dyness PowerBox Pro | ✅ Sollte funktionieren (Community-getestet) |
+| Dyness Cygni 10.0HS-M8 | ✅ Sollte funktionieren (Community-getestet) |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
 
 > Die Integration erkennt das Gerät automatisch über die API und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
@@ -155,6 +158,9 @@ Du hast ein anderes Dyness-Modell mit WiFi-Dongle und möchtest es testen? Erste
 | Dyness Tower T14 | ✅ Should work (community-tested) |
 | Dyness DL5.0C | ✅ Should work (community-tested) |
 | Dyness PowerHaus | ✅ Should work (community-tested) |
+| Dyness Stack100 | ✅ Should work (community-tested) |
+| Dyness PowerBox Pro | ✅ Should work (community-tested) |
+| Dyness Cygni 10.0HS-M8 | ✅ Should work (community-tested) |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
 
 > The integration automatically detects the device via the API and only registers sensors available for that specific device.

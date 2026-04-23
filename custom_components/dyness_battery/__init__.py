@@ -595,6 +595,92 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             if bp is not None:
                                 data["realTimePower"] = bp
 
+                    # ── Alarm-Text Dekodierung ────────────────────────────────
+                    _ALARM_BITS_1 = {
+                        "3201": "Cell voltage consistency warning",
+                        "3202": "MOSFET high temperature",
+                        "3203": "Cell low temperature",
+                        "3204": "Cell high temperature",
+                        "3205": "Cell low voltage",
+                        "3206": "Cell high voltage",
+                        "3207": "Pack low voltage",
+                        "3208": "Pack high voltage",
+                    }
+                    _ALARM_BITS_2 = {
+                        "3305": "Internal communication error",
+                        "3306": "Discharge overcurrent",
+                        "3307": "Charge overcurrent",
+                        "3308": "Cell temperature consistency warning",
+                    }
+                    alarm_texts = []
+                    for pid, label in {**_ALARM_BITS_1, **_ALARM_BITS_2}.items():
+                        if str(rt.get(pid, "0")) == "1":
+                            alarm_texts.append(label)
+                    # Tower Alarm-Bits
+                    _ALARM_BITS_TOWER = {
+                        "5001": "Voltage spread alarm",
+                        "5002": "Temperature spread alarm",
+                        "5003": "Low insulation alarm",
+                        "5101": "AFE communication error",
+                        "5102": "BMS communication error",
+                        "5104": "System fault",
+                    }
+                    for pid, label in _ALARM_BITS_TOWER.items():
+                        if str(rt.get(pid, "0")) == "1":
+                            alarm_texts.append(label)
+
+                    if alarm_texts:
+                        data["alarmText"] = ", ".join(alarm_texts)
+                        # Persistent Notification in HA
+                        self.hass.async_create_task(
+                            self.hass.services.async_call(
+                                "persistent_notification", "create", {
+                                    "title": "⚠️ Dyness Battery Alarm",
+                                    "message": (
+                                        f"Active alarms detected on {self.device_sn}:\n"
+                                        + "\n".join(f"• {t}" for t in alarm_texts)
+                                        + "\n\nPlease contact Dyness support if the issue persists."
+                                    ),
+                                    "notification_id": f"dyness_alarm_{self.device_sn}",
+                                }
+                            )
+                        )
+                    else:
+                        data["alarmText"] = "OK"
+                        # Notification löschen wenn kein Alarm mehr
+                        self.hass.async_create_task(
+                            self.hass.services.async_call(
+                                "persistent_notification", "dismiss", {
+                                    "notification_id": f"dyness_alarm_{self.device_sn}",
+                                }
+                            )
+                        )
+
+                    # ── stationName als Gerätename ─────────────────────────────
+                    data["stationName"] = self.device_info.get("stationName") or                                           self.storage_info.get("stationName") or                                           "Dyness Battery"
+
+                    # ── Voltage Limits ─────────────────────────────────────────
+                    if "800" in rt:
+                        cv = _to_float(rt.get("3600"))
+                        dv = _to_float(rt.get("3700"))
+                        if cv is not None and cv > 0:
+                            data["chargeVoltageLimit"] = cv
+                        if dv is not None and dv > 0:
+                            data["dischargeVoltageLimit"] = dv
+
+                    # ── Cell-Nummer mit Max/Min Spannung ───────────────────────
+                    if "800" in rt:
+                        data["cellVoltageMaxModule"] = rt.get("1401")
+                        data["cellVoltageMaxCell"]   = rt.get("1402")
+                        data["cellVoltageMinModule"] = rt.get("1601")
+                        data["cellVoltageMinCell"]   = rt.get("1602")
+
+                    # ── Balancing Status ───────────────────────────────────────
+                    if "800" in rt:
+                        bal = rt.get("4000")
+                        if bal is not None:
+                            data["balancingStatus"] = str(bal) != "0"
+
                     # ── Modul-Daten anhängen ──────────────────────────────────
                     n_modules = max(len(self._module_sns), 1)
                     data["module_data"]  = self.module_data
@@ -631,22 +717,37 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
     """Parst Sub-Modul Datenpunkte.
 
     Smart Detection:
-    - Tower T14:  Point 11200 vorhanden → 30 Zellen (11200-14100, Schritte 100)
-    - DL5.0C:    Point 10300 vorhanden → 16 Zellen (10300-11800, Schritte 100)
+    - Stack100:  Point 11000 (Modul-Nr) + 10010 (Sub-SN) → 16 Zellen (11200-12700)
+    - Tower T14: Point 10000 fehlt, Point 11200 vorhanden → 30 Zellen (11200-14100)
+    - DL5.0C:    Point 10000 vorhanden, Point 10300 vorhanden → 16 Zellen (10300-11800)
     """
     def g(key): return pts.get(key) if pts.get(key) not in (None, "") else None
 
     d = {"sn": sn, "module_id": mid}
-    # Tower T14 Sub-Module haben Point 10000 NICHT (keine eigene Modul-SN im Schema)
-    # DL5.0C Sub-Module haben Point 10000 (eigene Modul-SN)
-    # Zusätzlich: DL5.0C hat Points 10300-11800 (16 Zellen), Tower hat 11200-14100 (30 Zellen)
-    # Da DL5.0C Point 11200 = Cell 10 hat, reicht pts.get("11200") nicht zur Unterscheidung!
-    # Sicherer Check: Tower erkennen via Point 10000 FEHLT und Point 11200 vorhanden
-    has_module_sn = pts.get("10000") is not None  # DL5.0C hat eigene Modul-SN
-    is_tower = not has_module_sn and pts.get("11200") is not None
-    is_dl5   = has_module_sn and pts.get("10300") is not None
+    has_module_sn = pts.get("10000") is not None
+    is_stack100 = pts.get("10010") is not None and pts.get("11000") is not None
+    is_tower    = not has_module_sn and not is_stack100 and pts.get("11200") is not None
+    is_dl5      = has_module_sn and not is_stack100 and pts.get("10300") is not None
 
-    if is_tower:
+    if is_stack100:
+        # Stack100: 16 Zellen, Points 11200-12700 (Schritte 100)
+        # Temperaturen: 14300-14600 (4 Sensoren)
+        cells = []
+        for i in range(1, 17):
+            pid = str(11100 + i * 100)  # 11200, 11300, ..., 12700
+            v = _to_float(pts.get(pid))
+            d[f"cell_{i:02d}"] = v
+            if v is not None and v > 0:
+                cells.append(v)
+        # Temperaturen
+        temps = [_to_float(pts.get(str(14300 + i * 100))) for i in range(4)]
+        temps_valid = [t for t in temps if t is not None and t > 0]
+        if temps_valid:
+            d["cell_temp_1"] = temps_valid[0] if len(temps_valid) > 0 else None
+            d["cell_temp_2"] = temps_valid[1] if len(temps_valid) > 1 else None
+        d["module_number"] = _to_float(pts.get("11000"))
+
+    elif is_tower:
         # Tower T14: 30 Zellen, Points 11200-14100
         d["cell_temp_1"] = _to_float(g("14300"))
         d["cell_temp_2"] = _to_float(g("14400"))

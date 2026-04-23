@@ -297,6 +297,30 @@
       },
       "pv3_current": {
         "name": "PV String 3 Current"
+      },
+      "alarm_text": {
+        "name": "Alarm Details"
+      },
+      "charge_voltage_limit": {
+        "name": "Charge Voltage Limit"
+      },
+      "discharge_voltage_limit": {
+        "name": "Discharge Voltage Limit"
+      },
+      "cell_v_max_module": {
+        "name": "Cell Voltage Max Module"
+      },
+      "cell_v_max_cell": {
+        "name": "Cell Voltage Max Cell"
+      },
+      "cell_v_min_module": {
+        "name": "Cell Voltage Min Module"
+      },
+      "cell_v_min_cell": {
+        "name": "Cell Voltage Min Cell"
+      },
+      "balancing_status": {
+        "name": "Balancing Status"
       }
     }
   },

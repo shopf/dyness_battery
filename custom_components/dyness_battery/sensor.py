@@ -36,6 +36,15 @@ SENSORS = [
     # Max Lade-/Entladestrom (Diagnostic)
     ("chargeCurrentLimit",     "charge_current_limit",   UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-ac",             None, _D),
     ("dischargeCurrentLimit",  "discharge_current_limit",UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-ac",             None, _D),
+    # Alarm Text + neue Sensoren
+    ("alarmText",              "alarm_text",             None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
+    ("chargeVoltageLimit",     "charge_voltage_limit",   UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:battery-arrow-up",       1,    _D),
+    ("dischargeVoltageLimit",  "discharge_voltage_limit",UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:battery-arrow-down",     1,    _D),
+    ("cellVoltageMaxModule",   "cell_v_max_module",      None,                         None,                          None,                              "mdi:numeric",                None, _D),
+    ("cellVoltageMaxCell",     "cell_v_max_cell",        None,                         None,                          None,                              "mdi:numeric",                None, _D),
+    ("cellVoltageMinModule",   "cell_v_min_module",      None,                         None,                          None,                              "mdi:numeric",                None, _D),
+    ("cellVoltageMinCell",     "cell_v_min_cell",        None,                         None,                          None,                              "mdi:numeric",                None, _D),
+    ("balancingStatus",        "balancing_status",       None,                         None,                          None,                              "mdi:scale-balance",          None, _D),
     # Inverter / Hybrid Sensoren (aus getLastRunningDataBySn — nur wenn verfügbar)
     ("pvPower",            "pv_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-power",            None, None),
     ("loadPower",          "load_power",           UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:home-lightning-bolt",    None, None),
@@ -85,8 +94,7 @@ SENSORS = [
     ("tempMosfet",             "temp_mosfet",            UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMax",             "temp_bms_max",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMin",             "temp_bms_min",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
-    ("alarmStatus1",           "alarm_status_1",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
-    ("alarmStatus2",           "alarm_status_2",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
+
     ("alarmTotal",             "alarm_total",            None,                         None,                          None,                              "mdi:alert",                  None, None),
     # ── Tower Alarm-Bits (Boolean) ───────────────────────────────────────────
     ("alarmSpreadV",   "alarm_spread_v",    None, None, None, "mdi:alert-circle-outline", None, None),

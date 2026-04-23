@@ -336,6 +336,30 @@
       },
       "pv3_current": {
         "name": "PV-String 3 Strom"
+      },
+      "alarm_text": {
+        "name": "Alarm Details"
+      },
+      "charge_voltage_limit": {
+        "name": "Ladespannungslimit"
+      },
+      "discharge_voltage_limit": {
+        "name": "Entladespannungslimit"
+      },
+      "cell_v_max_module": {
+        "name": "Höchstspannung Modul-Nr."
+      },
+      "cell_v_max_cell": {
+        "name": "Höchstspannung Zell-Nr."
+      },
+      "cell_v_min_module": {
+        "name": "Niedrigstspannung Modul-Nr."
+      },
+      "cell_v_min_cell": {
+        "name": "Niedrigstspannung Zell-Nr."
+      },
+      "balancing_status": {
+        "name": "Balancing-Status"
       }
     }
   }
