@@ -349,7 +349,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     if not s.endswith(_BMS_SUFFIXES)
                                     and not re.search(r'-BDU-\d+$', s)
                                 ]
-                                if len(candidates) > 1:
+                                if len(candidates) >= 1:
                                     if set(candidates) != set(self._module_sns):
                                         _LOGGER.info(
                                             "Dyness: Sub-Module aktualisiert: %s → %s",
@@ -357,11 +357,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                         )
                                         self._module_sns = candidates
                                         self._update_scan_interval()
-                                elif not self._module_sns:
-                                    _LOGGER.debug(
-                                        "Dyness: Einzelnes Sub-Modul — kein separater Abruf (%s)",
-                                        candidates
-                                    )
                         else:
                             _LOGGER.debug(
                                 "Dyness realTime/data: Code %s – %s",
