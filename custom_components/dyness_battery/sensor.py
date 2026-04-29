@@ -76,33 +76,18 @@ SENSORS = [
     ("pv1Current",         "pv1_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
     ("pv2Current",         "pv2_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
     ("pv3Current",         "pv3_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    _D),
-    # Tower Alarm-Bits (Boolean, Diagnostic)
+    # Tower Alarm-Bits (Boolean, Diagnostic) — nur einmal registriert
     ("alarmSpreadV",           "alarm_spread_v",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
     ("alarmSpreadT",           "alarm_spread_t",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, _D),
     ("alarmInsul",             "alarm_insul",            None,                         None,                          None,                              "mdi:shield-alert",           None, _D),
     ("alarmAfe",               "alarm_afe",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, _D),
     ("alarmBms",               "alarm_bms",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, _D),
     ("alarmSys",               "alarm_sys",              None,                         None,                          None,                              "mdi:alert",                  None, _D),
-    ("alarmTotal",             "alarm_total_tower",      None,                         None,                          None,                              "mdi:alert",                  None, _D),
-    # Tower Alarm-Bits (Boolean)
-    ("alSpreadV",              "alarm_spread_v",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
-    ("alSpreadT",              "alarm_spread_t",         None,                         None,                          None,                              "mdi:alert-circle-outline",   None, None),
-    ("alInsul",                "alarm_insul",            None,                         None,                          None,                              "mdi:shield-alert",           None, None),
-    ("alAfe",                  "alarm_afe",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, None),
-    ("alBms",                  "alarm_bms",              None,                         None,                          None,                              "mdi:lan-disconnect",         None, None),
-    ("alSys",                  "alarm_sys",              None,                         None,                          None,                              "mdi:alert",                  None, None),
+    ("alarmTotal",             "alarm_total",            None,                         None,                          None,                              "mdi:alert",                  None, _D),
+    # JuniorBox / DL5.0C Temperaturen (nur wenn vorhanden)
     ("tempMosfet",             "temp_mosfet",            UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMax",             "temp_bms_max",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
     ("tempBmsMin",             "temp_bms_min",           UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None, None),
-
-    ("alarmTotal",             "alarm_total",            None,                         None,                          None,                              "mdi:alert",                  None, None),
-    # ── Tower Alarm-Bits (Boolean) ───────────────────────────────────────────
-    ("alarmSpreadV",   "alarm_spread_v",    None, None, None, "mdi:alert-circle-outline", None, None),
-    ("alarmSpreadT",   "alarm_spread_t",    None, None, None, "mdi:alert-circle-outline", None, None),
-    ("alarmInsul",     "alarm_insul",       None, None, None, "mdi:shield-alert",         None, None),
-    ("alarmAfe",       "alarm_afe",         None, None, None, "mdi:lan-disconnect",       None, None),
-    ("alarmBms",       "alarm_bms",         None, None, None, "mdi:alert",                None, None),
-    ("alarmSys",       "alarm_sys",         None, None, None, "mdi:alert",                None, None),
     # ── Diagnose ─────────────────────────────────────────────────────────────
     ("createTime",             "last_update",            None,                         None,                          None,                              "mdi:clock-outline",          None, _D),
     ("batteryCapacity",        "battery_capacity",       UnitOfEnergy.KILO_WATT_HOUR,  SensorDeviceClass.ENERGY,      None,                              "mdi:battery",                None, _D),
@@ -131,7 +116,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     ])
 
     # Modul-Sensoren — dynamisch bei jedem neuen Modul registrieren
-    known_module_ids: set = set()
+    # known_module_ids aus der Entity Registry vorbelegen, damit nach einem
+    # HA-Neustart bereits registrierte Module nicht erneut hinzugefügt werden
+    # und der "unique ID already exists"-Fehler verschwindet.
+    from homeassistant.helpers import entity_registry as er
+    _er = er.async_get(hass)
+    known_module_ids: set = {
+        # unique_id Schema: "{entry_id}_{module_id}_{data_key}"
+        # Modul-IDs sind immer numerisch (z.B. "06130593") →
+        # parts[1].isdigit() schließt Pack-Sensoren wie "cell_voltage_max" sicher aus
+        parts[1]
+        for entity in er.async_entries_for_config_entry(_er, entry.entry_id)
+        if len(parts := entity.unique_id.split("_")) >= 3
+        and parts[1].isdigit()
+    }
 
     def _add_new_modules() -> None:
         module_data = (coordinator.data or {}).get("module_data", {})

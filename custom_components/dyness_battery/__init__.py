@@ -22,6 +22,21 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "dyness_battery"
 PLATFORMS = [Platform.SENSOR]
 
+# Entitäten die in früheren Versionen existierten aber entfernt wurden.
+# Diese werden beim Setup automatisch aus der Entity-Registry gelöscht.
+STALE_ENTITY_KEYS = {
+    # v2.0.0: alarmStatus1 / alarmStatus2 ersetzt durch alarmText + Alarm-Bit-Sensoren
+    "alarmStatus1",
+    "alarmStatus2",
+    # Veraltete Tower-Alarm-Duplikate (al* ohne alarm*-Präfix)
+    "alSpreadV",
+    "alSpreadT",
+    "alInsul",
+    "alAfe",
+    "alBms",
+    "alSys",
+}
+
 # API Rate-Limit: max ~60 Calls/Stunde = 1/Minute
 # Pro Update: 3 Basis-Calls + 2 pro Sub-Modul
 # 1-2 Module → 5 Min, 3-4 Module → 10 Min, 5+ Module → 15 Min
@@ -91,6 +106,9 @@ def _is_success(result: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # ── Veraltete Entitäten aus der Entity-Registry entfernen ────────────────
+    await _async_cleanup_stale_entities(hass, entry)
+
     coordinator = DynessDataCoordinator(
         hass,
         entry.data["api_id"],
@@ -104,6 +122,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Löscht veraltete Entitäten aus der Entity-Registry.
+
+    Prüft alle registrierten Entitäten dieser Integration und entfernt jene,
+    deren unique_id auf einen veralteten Sensor-Key hinweist (STALE_ENTITY_KEYS).
+    Funktioniert sowohl für Pack-Level als auch für Modul-Sensoren.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    entity_registry = er.async_get(hass)
+    stale_entities = [
+        entity
+        for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        if any(
+            entity.unique_id == f"{entry.entry_id}_{key}"          # Pack-Level
+            or entity.unique_id.endswith(f"_{key}")                 # Modul-Level (entry_id_mid_key)
+            for key in STALE_ENTITY_KEYS
+        )
+    ]
+    if stale_entities:
+        _LOGGER.info(
+            "Dyness: Bereinige %d veraltete Entität(en): %s",
+            len(stale_entities),
+            [e.unique_id for e in stale_entities],
+        )
+        for entity in stale_entities:
+            entity_registry.async_remove(entity.entity_id)
+    else:
+        _LOGGER.debug("Dyness: Keine veralteten Entitäten gefunden.")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -456,7 +505,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             if dl is not None and dl > 0:
                                 data["dischargeCurrentLimit"] = dl
                     elif "1400" in rt:
-                        # Tower Schema
+                        # Tower Schema (Tower T14 + Tower Pro TP7)
                         data["soh"]                   = rt.get("1500")
                         data["tempMax"]               = rt.get("3000")
                         data["tempMin"]               = rt.get("3300")
@@ -464,18 +513,40 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["cellVoltageMin"]         = rt.get("2700")
                         data["cycleCount"]             = rt.get("1800")
                         data["energyChargeTotal"]      = rt.get("1900")
-                        # Point 1600 = verbleibende Kapazität kWh (direkt vom Tower)
+                        # Point 1600 = Verbleibende Kapazität kWh (direkt vom Tower/TP7-BMS)
                         tower_remaining = _to_float(rt.get("1600"))
                         if tower_remaining is not None and tower_remaining > 0:
                             data["remainingKwh"] = tower_remaining
-                        # Alarm-Bits als Boolean-Sensoren (Tower T14 verifiziert)
-                        data["alarmSpreadV"]  = str(rt.get("5001", "0")) == "1"
-                        data["alarmSpreadT"]  = str(rt.get("5002", "0")) == "1"
-                        data["alarmInsul"]    = str(rt.get("5003", "0")) == "1"
-                        data["alarmAfe"]      = str(rt.get("5101", "0")) == "1"
-                        data["alarmBms"]      = str(rt.get("5102", "0")) == "1"
-                        data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
-                        data["alarmTotal"]    = rt.get("9999999")
+                        # Point 1700 = Nutzbare (Nenn-)Kapazität kWh (Tower Pro TP7)
+                        # Überschreibt batteryCapacity aus station/info falls vorhanden
+                        tower_usable = _to_float(rt.get("1700"))
+                        if tower_usable is not None and tower_usable > 0:
+                            data["usableKwh"] = tower_usable
+                            # batteryCapacity angleichen falls abweichend
+                            if data.get("batteryCapacity") is None:
+                                data["batteryCapacity"] = tower_usable
+                        # Tower Pro TP7: Alarm-Flags (4400-4805, je Flag-Register + Bit-Aufgliederung)
+                        # Tower T14: Alarm-Bits direkt (5001-5104)
+                        if rt.get("4400") is not None:
+                            # Tower Pro TP7 Alarm-Schema
+                            data["alarmSpreadV"] = str(rt.get("4402", "0")) == "1"  # Einzelzellspannung zu hoch — Alarm Stufe 1
+                            data["alarmSpreadT"] = str(rt.get("4403", "0")) == "1"  # Ladetemperatur zu hoch — Alarm Stufe 1
+                            data["alarmInsul"]   = False  # TP7 hat keinen separaten Isolationsfehler-Bit
+                            data["alarmAfe"]     = False
+                            data["alarmBms"]     = False
+                            data["alarmSys"]     = False
+                            # Gesamtalarm: irgendein Flag-Register ≠ 0
+                            flags = [rt.get(str(f), "0") for f in [4400, 4500, 4600, 4700, 4800, 4900]]
+                            data["alarmTotal"] = str(int(any(str(f) != "0" for f in flags)))
+                        else:
+                            # Tower T14 Alarm-Schema (verifiziert)
+                            data["alarmSpreadV"]  = str(rt.get("5001", "0")) == "1"
+                            data["alarmSpreadT"]  = str(rt.get("5002", "0")) == "1"
+                            data["alarmInsul"]    = str(rt.get("5003", "0")) == "1"
+                            data["alarmAfe"]      = str(rt.get("5101", "0")) == "1"
+                            data["alarmBms"]      = str(rt.get("5102", "0")) == "1"
+                            data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
+                            data["alarmTotal"]    = rt.get("9999999")
 
                     # ── Temperatur-Logik ─────────────────────────────────────
                     # Wenn tempMax == tempMin → nur tempMax behalten (ein Sensor)
@@ -686,15 +757,45 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     data["module_data"]  = self.module_data
                     data["moduleCount"]  = len(self._module_sns)
 
+                    # ── usableKwh / remainingKwh Berechnung ──────────────────
+                    # Strategie 1 (bevorzugt für Powerbox Pro / DL5.0C):
+                    #   Sub-Modul-Daten enthalten remain_ah (Point 13600) und
+                    #   total_ah (Point 13800) sowie Modulspannung (Point 13500).
+                    #   Ah × Spannung liefert kWh direkt aus dem BMS —
+                    #   unabhängig vom oft fehlerhaften soh-Point des Masters.
+                    # Strategie 2 (Fallback): bc × soh/100 × soc/100
                     try:
-                        bc  = _to_float(data.get("batteryCapacity"))  # bereits × n_modules
-                        soc = _to_float(data.get("soc"))
-                        soh = _to_float(data.get("soh"))
-                        if bc is not None and soc is not None and soh is not None:
-                            usable    = round(bc * (soh / 100), 3)
-                            remaining = round(usable * (soc / 100), 3)
-                            data["usableKwh"]    = usable
-                            data["remainingKwh"] = remaining
+                        mod_data = data.get("module_data", {})
+                        total_remain_kwh = 0.0
+                        total_usable_kwh = 0.0
+                        valid_modules    = 0
+                        for mod in mod_data.values():
+                            remain_ah = _to_float(mod.get("remain_ah"))
+                            total_ah  = _to_float(mod.get("total_ah"))
+                            voltage   = _to_float(mod.get("voltage"))
+                            if (remain_ah is not None and total_ah is not None
+                                    and voltage is not None
+                                    and total_ah > 0 and voltage > 10):
+                                total_remain_kwh += remain_ah * voltage / 1000
+                                total_usable_kwh += total_ah  * voltage / 1000
+                                valid_modules    += 1
+                        if valid_modules > 0 and total_usable_kwh > 0:
+                            data["usableKwh"]    = round(total_usable_kwh, 3)
+                            data["remainingKwh"] = round(total_remain_kwh, 3)
+                            _LOGGER.debug(
+                                "Dyness: usableKwh=%.3f remainingKwh=%.3f (aus %d Modulen via Ah)",
+                                total_usable_kwh, total_remain_kwh, valid_modules,
+                            )
+                        else:
+                            # Fallback: batteryCapacity × SOH × SOC
+                            bc  = _to_float(data.get("batteryCapacity"))
+                            soc = _to_float(data.get("soc"))
+                            soh = _to_float(data.get("soh"))
+                            if bc is not None and soc is not None and soh is not None and soh <= 100:
+                                usable    = round(bc * (soh / 100), 3)
+                                remaining = round(usable * (soc / 100), 3)
+                                data["usableKwh"]    = usable
+                                data["remainingKwh"] = remaining
                     except (ValueError, TypeError):
                         pass
 
@@ -725,11 +826,15 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
 
     d = {"sn": sn, "module_id": mid}
     has_module_sn = pts.get("10000") is not None
-    is_stack100 = pts.get("10010") is not None and pts.get("11000") is not None
-    is_tower    = not has_module_sn and not is_stack100 and pts.get("11200") is not None
-    is_dl5      = has_module_sn and not is_stack100 and pts.get("10300") is not None
+    is_stack100   = pts.get("10010") is not None and pts.get("11000") is not None
+    is_tower      = not has_module_sn and not is_stack100 and pts.get("11200") is not None
+    is_dl5        = has_module_sn and not is_stack100 and pts.get("10300") is not None
+    # Tower Pro TP7 Sub-Module haben das gleiche Schema wie Stack100 (10010+11000),
+    # aber 30 Zellen (Point 11100 = 30) statt 16 und andere Temperaturen.
+    cell_count_pt = _to_float(pts.get("11100")) if is_stack100 else None
+    is_tp7_module = is_stack100 and cell_count_pt is not None and int(cell_count_pt) == 30
 
-    if is_stack100:
+    if is_stack100 and not is_tp7_module:
         # Stack100: 16 Zellen, Points 11200-12700 (Schritte 100)
         # Temperaturen: 14300-14600 (4 Sensoren)
         cells = []
@@ -744,6 +849,27 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
         temps_valid = [t for t in temps if t is not None and t > 0]
         if temps_valid:
             d["cell_temp_1"] = temps_valid[0] if len(temps_valid) > 0 else None
+            d["cell_temp_2"] = temps_valid[1] if len(temps_valid) > 1 else None
+        d["module_number"] = _to_float(pts.get("11000"))
+
+    elif is_tp7_module:
+        # Tower Pro TP7 Sub-Module: 30 Zellen, Points 11200-14100 (Schritte 100)
+        # Temperaturen: 14300-15000 (bis zu 8 Sensoren, aktive per Point 14200)
+        n_temps = int(_to_float(pts.get("14200")) or 0)
+        cells = []
+        for i in range(1, 31):
+            pid = str(11100 + i * 100)  # 11200, ..., 14100
+            v = _to_float(pts.get(pid))
+            d[f"cell_{i:02d}"] = v
+            if v is not None and v > 0:
+                cells.append(v)
+        temps_valid = []
+        for i in range(8):
+            t = _to_float(pts.get(str(14300 + i * 100)))
+            if t is not None and t > 0:
+                temps_valid.append(t)
+        if temps_valid:
+            d["cell_temp_1"] = temps_valid[0]
             d["cell_temp_2"] = temps_valid[1] if len(temps_valid) > 1 else None
         d["module_number"] = _to_float(pts.get("11000"))
 
@@ -764,11 +890,26 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
         # SOC/SOH nur wenn plausibel (≤ 100%) — PowerBox Pro liefert hier andere Werte
         soc_raw = _to_float(g("14000"))
         soh_raw = _to_float(g("14100"))
-        d["soc"] = soc_raw if soc_raw is not None and soc_raw <= 100 else None
-        d["soh"] = soh_raw if soh_raw is not None and soh_raw <= 100 else None
+        # Point 14000 / 14100 können entweder SOC/SOH in % (≤100)
+        # oder Ah-Kapazitätswerte sein (>100, z.B. 132 Ah, 200 Ah).
+        # Powerbox Pro liefert Ah-Werte → als remain_ah/total_ah speichern.
+        if soc_raw is not None and soc_raw <= 100:
+            d["soc"] = soc_raw
+        if soh_raw is not None and soh_raw <= 100:
+            d["soh"] = soh_raw
+        # Ah-Kapazität: 14000/14100 bevorzugt (direkte Messung vom BMS),
+        # 13600/13800 als Fallback (alternative Einheit, weniger zuverlässig).
+        cap14000 = _to_float(g("14000"))
+        cap14100 = _to_float(g("14100"))
+        if cap14000 is not None and cap14000 > 100:
+            # Ah-Werte (nicht SOC%) → für kWh-Berechnung verwenden
+            d["remain_ah"] = cap14000
+            d["total_ah"]  = cap14100 if cap14100 is not None else None
+        else:
+            # Fallback: Point 13600/13800
+            d["remain_ah"] = _to_float(g("13600"))
+            d["total_ah"]  = _to_float(g("13800"))
         d["cycle_count"] = _to_float(g("13900"))
-        d["remain_ah"]   = _to_float(g("13600"))
-        d["total_ah"]    = _to_float(g("13800"))
         d["bms_temp"]    = _to_float(g("12400"))
         d["cell_temp_1"] = _to_float(g("12500"))
         d["cell_temp_2"] = _to_float(g("12600"))
