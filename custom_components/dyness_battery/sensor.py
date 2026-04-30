@@ -123,12 +123,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
     _er = er.async_get(hass)
     known_module_ids: set = {
         # unique_id Schema: "{entry_id}_{module_id}_{data_key}"
-        # Modul-IDs sind immer numerisch (z.B. "06130593") →
-        # parts[1].isdigit() schließt Pack-Sensoren wie "cell_voltage_max" sicher aus
+        # Modul-SNs sind alphanumerisch und mind. 8 Zeichen lang
+        # (z.B. "06130593", "D603250905007506", "0106032412230990")
+        # Pack-Sensor-Keys wie "cell", "temp", "soc" sind kürzer oder rein alpha
+        # → len >= 8 and isalnum() schließt Pack-Sensoren sicher aus
         parts[1]
         for entity in er.async_entries_for_config_entry(_er, entry.entry_id)
         if len(parts := entity.unique_id.split("_")) >= 3
-        and parts[1].isdigit()
+        and len(parts[1]) >= 8 and parts[1].isalnum()
     }
 
     def _add_new_modules() -> None:
