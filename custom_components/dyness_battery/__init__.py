@@ -399,7 +399,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     for item in m_raw
                                     if isinstance(item, dict) and "pointId" in item
                                 }
-                                mid = sn.split("-")[-1] if "-" in sn else sn[-8:]
+                                mid = sn  # volle SN als Key — konsistent mit Entity unique_id und known_module_ids
                                 new_module_data[mid] = _parse_module_points(sn, mid, m_pts)
                                 _LOGGER.debug("Dyness Modul %s: %d Punkte", mid, len(m_pts))
                             else:
