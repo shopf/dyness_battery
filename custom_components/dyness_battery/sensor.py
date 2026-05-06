@@ -134,22 +134,37 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     def _add_new_modules() -> None:
         nonlocal _registry_scanned
-        # Lazy Registry-Scan: erst beim ersten Aufruf, wenn Registry garantiert geladen
+        module_data = (coordinator.data or {}).get("module_data", {})
+        if not module_data:
+            return
+
+        # Beim ersten Aufruf: Registry-Scan.
+        #
+        # WICHTIG: known_module_ids verhindert doppelte Registrierung innerhalb
+        # einer Session. Nach einem HA-Restart muss async_add_entities jedoch
+        # erneut aufgerufen werden — auch für bereits bekannte Module — damit HA
+        # die Entities mit dem Coordinator verknüpft. HA verhindert echte Duplikate
+        # intern über die unique_id (bestehender Registry-Eintrag wird wiederverwendet).
+        #
+        # Deshalb: beim ersten Scan known_module_ids NICHT mit Registry-IDs befüllen.
+        # Stattdessen alle Module in module_data als "neu" behandeln → instanziieren.
+        # Ab dem zweiten Aufruf verhindert known_module_ids echte Duplikate.
         if not _registry_scanned:
             _registry_scanned = True
             _er = er.async_get(hass)
-            scanned = {
+            registry_mids = {
                 parts[1]
                 for entity in er.async_entries_for_config_entry(_er, entry.entry_id)
                 if len(parts := entity.unique_id.split("_")) >= 3
                 and len(parts[1]) >= 8 and parts[1].isalnum()
             }
-            known_module_ids.update(scanned)
             _LOGGER.debug(
-                "Dyness: known_module_ids aus Registry: %s",
-                known_module_ids or "leer"
+                "Dyness: Registry-Scan: %d Modul(e) bereits bekannt: %s",
+                len(registry_mids), registry_mids or "leer (Neuinstallation)"
             )
-        module_data = (coordinator.data or {}).get("module_data", {})
+            # known_module_ids leer lassen → alle Module werden instanziiert
+            # HA verknüpft bestehende Registry-Einträge über unique_id automatisch
+
         new_mids = [mid for mid in module_data if mid not in known_module_ids]
         if not new_mids:
             return

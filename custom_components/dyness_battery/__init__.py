@@ -549,8 +549,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # Tower T14: Alarm-Bits direkt (5001-5104)
                         if rt.get("4400") is not None:
                             # Tower Pro TP7 Alarm-Schema
-                            data["alarmSpreadV"] = str(rt.get("4402", "0")) == "1"  # Einzelzellspannung zu hoch — Alarm Stufe 1
-                            data["alarmSpreadT"] = str(rt.get("4403", "0")) == "1"  # Ladetemperatur zu hoch — Alarm Stufe 1
+                            data["alarmSpreadV"] = str(rt.get("4402", "0")) == "1"  # Einzelzellspannung zu hoch - Alarm Stufe 1
+                            data["alarmSpreadT"] = str(rt.get("4403", "0")) == "1"  # Ladetemperatur zu hoch - Alarm Stufe 1
                             data["alarmInsul"]   = False  # TP7 hat keinen separaten Isolationsfehler-Bit
                             data["alarmAfe"]     = False
                             data["alarmBms"]     = False
