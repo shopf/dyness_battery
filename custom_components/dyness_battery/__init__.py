@@ -47,6 +47,76 @@ _MAX_RETRIES = 3
 # Gültige BMS-Suffixe
 _BMS_SUFFIXES = ("-BMS", "-BDU")
 
+# ── Schema-Konstanten ─────────────────────────────────────────────────────────
+SCHEMA_TOWER    = "tower"
+SCHEMA_STACK100 = "stack100"
+SCHEMA_DL5      = "dl5"
+SCHEMA_G2       = "g2"
+SCHEMA_JUNIOR   = "junior"
+SCHEMA_CYGNI    = "cygni"
+SCHEMA_UNKNOWN  = "unknown"
+
+# Explizite Model → Schema Mapping
+# Neue Modelle hier eintragen — kein Code-Logik-Anfassen nötig.
+# Prefix-Match greift automatisch für Varianten (z.B. Cygni 10.0HS).
+_MODEL_SCHEMA_MAP: dict[str, str] = {
+    # Tower Familie
+    "TOWER-T14":      SCHEMA_TOWER,
+    "TOWER-TP7":      SCHEMA_TOWER,
+    "TOWER-TP11":     SCHEMA_TOWER,
+    "TOWER-TP15":     SCHEMA_TOWER,
+    # Stack100 Familie
+    "STACK100-8S":    SCHEMA_STACK100,
+    "STACK100-10S":   SCHEMA_STACK100,
+    # DL5 / PowerBox Pro Familie
+    "DL5.0C":         SCHEMA_DL5,
+    "POWERBOX-PRO":   SCHEMA_DL5,
+    # PowerBox G2
+    "POWERBOX-G2":    SCHEMA_G2,
+    # Junior Box / PowerHaus
+    "JUNIOR-BOX":     SCHEMA_JUNIOR,
+    "POWERHAUS":      SCHEMA_JUNIOR,
+    # Cygni Hybrid-Wechselrichter
+    "CYGNI":          SCHEMA_CYGNI,
+}
+
+
+def _detect_schema(device_model_name: str, rt: dict) -> str:
+    """Schema-Erkennung: primär via deviceModelName, Fallback via Points.
+
+    Neue Geräte werden ausschließlich in _MODEL_SCHEMA_MAP eingetragen.
+    Der Point-Fallback bleibt als Sicherheitsnetz für noch unbekannte Modelle.
+    """
+    model = (device_model_name or "").upper().replace(" ", "-")
+
+    # Exakter Match
+    if model in _MODEL_SCHEMA_MAP:
+        return _MODEL_SCHEMA_MAP[model]
+
+    # Prefix-Match für Varianten (z.B. STACK100-12S, Cygni 10.0HS)
+    for key, schema in _MODEL_SCHEMA_MAP.items():
+        prefix = key.split("-")[0]
+        if model.startswith(prefix):
+            _LOGGER.info(
+                "Dyness: Unbekannte Modell-Variante '%s' → Schema '%s' per Prefix-Match ('%s')",
+                model, schema, prefix,
+            )
+            return schema
+
+    # Fallback: Point-Heuristik (letzter Ausweg für komplett unbekannte Modelle)
+    _LOGGER.warning(
+        "Dyness: Unbekanntes Modell '%s' — Schema-Erkennung via Points (Fallback). "
+        "Bitte ein Issue mit Log-Datei erstellen.",
+        model,
+    )
+    if "1400" in rt and ("2400" in rt or "2700" in rt):
+        return SCHEMA_TOWER
+    if "800" in rt:
+        return SCHEMA_JUNIOR
+    if ("13400" in rt or "12400" in rt) and "800" not in rt and "1400" not in rt:
+        return SCHEMA_G2
+    return SCHEMA_UNKNOWN
+
 
 def _scan_interval_for_modules(n: int) -> timedelta:
     """Dynamisches Scan-Intervall basierend auf Modulanzahl."""
@@ -185,6 +255,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self._bound_sns: set = set()  # Bereits gebundene Sub-Modul SNs
         self._module_sns: list[str] = []
         self._last_call_time: float = 0.0
+        self._storage_list_cycle: int = 0  # Zähler für storage/list Throttling
 
     async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict) -> dict:
         """Rate-limitierter API-Aufruf mit Retry bei HTTP 429."""
@@ -310,18 +381,24 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         except Exception as e:
                             _LOGGER.warning("Dyness household/storage/detail nicht erreichbar: %s", e)
 
-                    # ── WorkStatus (bei jedem Update) ─────────────────────────
-                    try:
-                        result = await self._call(session, "/v1/device/storage/list", {})
-                        if _is_success(result):
-                            device_list = (result.get("data", {}) or {}).get("list", [])
-                            match = next(
-                                (d for d in device_list if d.get("deviceSn") == self.device_sn),
-                                device_list[0] if device_list else {}
-                            )
-                            self.storage_info = match
-                    except Exception as e:
-                        _LOGGER.warning("Dyness storage/list nicht erreichbar: %s", e)
+                    # ── WorkStatus + Communication Status (alle 3 Zyklen) ──────
+                    # storage/list spart bei jedem 2. von 3 Zyklen
+                    # einen API-Call → kürzeres effektives Intervall bei 5+ Modulen.
+                    # workStatus und deviceCommunicationStatus bleiben max. 3 Zyklen alt —
+                    # für Status-Anzeige ausreichend.
+                    self._storage_list_cycle = (self._storage_list_cycle + 1) % 3
+                    if self._storage_list_cycle == 0 or not self.storage_info:
+                        try:
+                            result = await self._call(session, "/v1/device/storage/list", {})
+                            if _is_success(result):
+                                device_list = (result.get("data", {}) or {}).get("list", [])
+                                match = next(
+                                    (d for d in device_list if d.get("deviceSn") == self.device_sn),
+                                    device_list[0] if device_list else {}
+                                )
+                                self.storage_info = match
+                        except Exception as e:
+                            _LOGGER.warning("Dyness storage/list nicht erreichbar: %s", e)
 
                     # ── realTime/data BMS (bei jedem Update) ──────────────────
                     try:
@@ -446,6 +523,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         _LOGGER.warning("Dyness getLastRunningDataBySn nicht erreichbar: %s", e)
 
                     # ── Leistungsdaten (bei jedem Update) ────────────────────
+                    # UpdateFailed nur noch bei Totalausfall.
+                    # Bei Teilerfolg (z.B. realTime/data OK, getLastPowerDataBySn fehlerhaft)
+                    # letzten gültigen Stand behalten statt alle Sensoren unavailable zu machen.
                     body = {"pageNo": 1, "pageSize": 1, "deviceSn": self.device_sn}
                     if self.dongle_sn:
                         body["collectorSn"] = self.dongle_sn
@@ -453,17 +533,24 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         session, "/v1/device/getLastPowerDataBySn", body
                     )
                     code = str(result.get("code", ""))
-                    if code not in ("0", "200") and result.get("code") != 0:
-                        _LOGGER.error(
-                            "Dyness getLastPowerDataBySn fehlgeschlagen – Code %s: %s (deviceSn=%s)",
-                            code, result.get("info"), self.device_sn
+                    _power_data_ok = code in ("0", "200") or result.get("code") == 0
+                    if not _power_data_ok:
+                        _LOGGER.warning(
+                            "Dyness getLastPowerDataBySn fehlgeschlagen – Code %s: %s (deviceSn=%s) "
+                            "— behalte letzten Stand",
+                            code, result.get("info"), self.device_sn,
                         )
-                        raise UpdateFailed(
-                            f"Dyness API Fehler (Code {code}): {result.get('info', 'Unbekannt')} "
-                            f"– deviceSn={self.device_sn}"
-                        )
+                        # Totalausfall: auch realTime/data leer → jetzt UpdateFailed
+                        if not self.realtime_data and not self.running_data:
+                            raise UpdateFailed(
+                                f"Dyness API Fehler (Code {code}): {result.get('info', 'Unbekannt')} "
+                                f"– deviceSn={self.device_sn}"
+                            )
+                        # Teilerfolg: anderen Daten wurden bereits aktualisiert → weiter
+                        data = {}
+                    else:
+                        data = result.get("data", {})
 
-                    data = result.get("data", {})
                     if isinstance(data, list):
                         valid = [d for d in data if d.get("soc") is not None]
                         if not valid:
@@ -474,22 +561,32 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data = valid[-1] if valid else (data[-1] if data else {})
 
                     # ── Statische Felder ──────────────────────────────────────
-                    data["deviceCommunicationStatus"] = self.device_info.get("deviceCommunicationStatus")
+                    # deviceCommunicationStatus: aus storage/list (bei jedem Update aktuell)
+                    # statt device_info (einmalig beim Start — veraltet nach Neuverbindung).
+                    comm_status = self.storage_info.get("deviceCommunicationStatus")
+                    if comm_status is None:
+                        comm_status = self.device_info.get("deviceCommunicationStatus")
+                    data["deviceCommunicationStatus"] = comm_status
                     data["firmwareVersion"]            = self.device_info.get("firmwareVersion")
                     data["workStatus"]                 = self.storage_info.get("workStatus")
 
                     # ── realTime/data Felder ──────────────────────────────────
                     rt = self.realtime_data
 
+                    # Schema-Erkennung via deviceModelName (primär) + Point-Fallback
+                    schema = _detect_schema(
+                        self.device_info.get("deviceModelName", ""), rt
+                    )
+                    data["_schema"] = schema
+                    _LOGGER.debug("Dyness: Schema erkannt: %s", schema)
+
                     # batteryCapacity aus station/info:
-                    # - Standard-Geräte (DL5.0C, Stack100, Powerbox Pro):
-                    #   station/info = Kapazität EINES Moduls → × n_modules
-                    # - Tower / Tower Pro TP7/TP11 (Schema "1400" in rt):
-                    #   station/info = GESAMT-Kapazität → NICHT multiplizieren
-                    #   Point 1700 überschreibt batteryCapacity sowieso korrekt
+                    # - Tower: station/info = GESAMT-Kapazität → NICHT multiplizieren
+                    # - DL5 Master/Slave: station/info = Kapazität Master → × n_sub_modules
+                    # - Alle anderen: station/info = Kapazität EINES Moduls → × n_modules
                     bc_single = _to_float(self.station_info.get("batteryCapacity"))
                     n_modules = max(len(self._module_sns), 1)
-                    is_tower_schema = "1400" in rt
+                    is_tower_schema = schema == SCHEMA_TOWER
                     if bc_single is not None and n_modules > 1 and not is_tower_schema:
                         data["batteryCapacity"] = round(bc_single * n_modules, 3)
                         _LOGGER.debug(
@@ -498,7 +595,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
                     else:
                         data["batteryCapacity"] = bc_single
-                    if "800" in rt:
+                    if schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
                         # Junior Box / DL5.0C / PowerHaus Schema
                         data["packVoltage"]           = rt.get("600")
                         data["soh"]                   = rt.get("1200")
@@ -524,8 +621,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 data["chargeCurrentLimit"] = cl
                             if dl is not None and dl > 0:
                                 data["dischargeCurrentLimit"] = dl
-                    elif "1400" in rt:
-                        # Tower Schema (Tower T14 + Tower Pro TP7)
+                    elif schema == SCHEMA_TOWER:
+                        # Tower Schema (Tower T14 + Tower Pro TP7/TP11/TP15)
                         data["soh"]                   = rt.get("1500")
                         data["tempMax"]               = rt.get("3000")
                         data["tempMin"]               = rt.get("3300")
@@ -568,7 +665,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
                             data["alarmTotal"]    = rt.get("9999999")
 
-                    elif ("13400" in rt or "12400" in rt) and "800" not in rt and "1400" not in rt:
+                    elif schema == SCHEMA_G2:
                         # Powerbox G2 Schema (deviceModelCode 42)
                         # Kein Master/Slave Konzept — alles in einem Block
                         #
@@ -814,7 +911,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     data["stationName"] = self.device_info.get("stationName") or                                           self.storage_info.get("stationName") or                                           "Dyness Battery"
 
                     # ── Voltage Limits ─────────────────────────────────────────
-                    if "800" in rt:
+                    if schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
                         cv = _to_float(rt.get("3600"))
                         dv = _to_float(rt.get("3700"))
                         if cv is not None and cv > 0:
@@ -823,14 +920,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["dischargeVoltageLimit"] = dv
 
                     # ── Cell-Nummer mit Max/Min Spannung ───────────────────────
-                    if "800" in rt:
+                    if schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
                         data["cellVoltageMaxModule"] = rt.get("1401")
                         data["cellVoltageMaxCell"]   = rt.get("1402")
                         data["cellVoltageMinModule"] = rt.get("1601")
                         data["cellVoltageMinCell"]   = rt.get("1602")
 
                     # ── Balancing Status ───────────────────────────────────────
-                    if "800" in rt:
+                    if schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
                         bal = rt.get("4000")
                         if bal is not None:
                             data["balancingStatus"] = str(bal) != "0"
