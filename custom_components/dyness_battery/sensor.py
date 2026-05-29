@@ -249,7 +249,16 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return (self.coordinator.data or {}).get(self._key)
+        val = (self.coordinator.data or {}).get(self._key)
+        if val is None:
+            return None
+        # API liefert Zahlenwerte als Strings — für numerische Sensoren konvertieren
+        if self._attr_native_unit_of_measurement is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                pass
+        return val
 
     @property
     def available(self):
@@ -316,7 +325,15 @@ class DynessModuleSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return (self.coordinator.data or {}).get("module_data", {}).get(self._module_id, {}).get(self._data_key)
+        val = (self.coordinator.data or {}).get("module_data", {}).get(self._module_id, {}).get(self._data_key)
+        if val is None:
+            return None
+        if self._attr_native_unit_of_measurement is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                pass
+        return val
 
     @property
     def available(self):

@@ -52,6 +52,7 @@ SCHEMA_TOWER        = "tower"
 SCHEMA_STACK100     = "stack100"
 SCHEMA_DL5          = "dl5"
 SCHEMA_POWERBOX_PRO = "powerbox_pro"
+SCHEMA_POWERBOX_G2  = "powerbox_g2"
 SCHEMA_POWERDEPOT   = "powerdepot"
 SCHEMA_JUNIOR       = "junior"
 SCHEMA_CYGNI        = "cygni"
@@ -74,8 +75,8 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "STACK100-10S":     SCHEMA_STACK100,
     # DL5 Familie
     "DL5.0C":           SCHEMA_DL5,
-    # PowerBox G2 (modelCode 42) — gleiche Point-Struktur wie DL5.0C, verifiziert
-    "POWERBOX-G2":      SCHEMA_DL5,
+    # PowerBox G2 (modelCode 42) — eigenes Schema mit 5-stelligen Points, verifiziert
+    "POWERBOX-G2":      SCHEMA_POWERBOX_G2,
     # PowerBox Pro / PowerHaus — eigenes Schema, verifiziert via Log
     "POWERBOX-PRO":     SCHEMA_POWERBOX_PRO,
     "POWERHAUS":        SCHEMA_POWERBOX_PRO,
@@ -580,6 +581,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     # ── realTime/data Felder ──────────────────────────────────
                     rt = self.realtime_data
 
+                    def _rt_set(key: str, point: str) -> None:
+                        """Setzt data[key] nur wenn Point in rt vorhanden und nicht None.
+                        Verhindert Unavailable beim ersten leeren Zyklus nach Reload."""
+                        v = rt.get(point)
+                        if v is not None:
+                            data[key] = v
+
                     # Schema-Erkennung via deviceModelName (primär) + Point-Fallback
                     schema = _detect_schema(
                         self.device_info.get("deviceModelName", ""), rt
@@ -608,7 +616,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["batteryCapacity"] = bc_single
                     if schema == SCHEMA_STACK100:
                         # Stack100 Schema — Points direkt vom BMS Master
-                        data["packVoltage"]    = rt.get("1100")
+                        data["packVoltage"] = rt.get("1100") if rt.get("1100") is not None else data.get("packVoltage")
                         data["soh"]            = rt.get("1500")
                         data["cycleCount"]     = rt.get("1800")
                         data["energyChargeTotal"] = rt.get("1900")
@@ -665,6 +673,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
 
                     elif schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
+                        data["packVoltage"]            = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
                         data["soh"]                   = rt.get("1200")
                         data["temp"]                  = rt.get("1800")
                         data["cellVoltageMax"]         = rt.get("1300")
@@ -701,7 +710,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # 3200–3500 = Alarm-Bits (gleiche Struktur wie Junior/DL5)
                         # 4000 = Ah-Wert (kein Balancing-Flag — nicht nutzen)
                         # 900/1000/1100/1900 = leer oder Modul-Nummern → kein Cycle Count
-                        data["packVoltage"]    = rt.get("600")
+                        data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
                         data["soh"]            = rt.get("1200")
                         data["cellVoltageMax"] = rt.get("1300")
                         data["cellVoltageMin"] = rt.get("1500")
@@ -785,49 +794,121 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
                             data["alarmTotal"]    = rt.get("9999999")
 
-                    elif schema == SCHEMA_POWERDEPOT:
-                        # PowerDepot G2 Schema (modelCode 144)
-                        # Points verifiziert via API-Log (Issue #29):
-                        # 600  = Pack Voltage (avg V)
-                        # 700  = Total Current (A)
-                        # 800  = Average SOC (%)
-                        # 1300 = Cell Voltage Max (V)
-                        # 1500 = Cell Voltage Min (V)
-                        # 1800 = Temperature Max Zellen (°C)
-                        # 2000 = Temperature Min Zellen (°C)
-                        # 2800 = BMS Temperature Max (°C)
-                        # 3000 = BMS Temperature Min (°C)
-                        # 3600/3700 = Charge/Discharge Voltage Limit (V)
-                        data["packVoltage"]     = rt.get("600")
-                        data["realTimeCurrent"] = rt.get("700")
-                        data["soc"]             = rt.get("800")
-                        data["cellVoltageMax"]  = rt.get("1300")
-                        data["cellVoltageMin"]  = rt.get("1500")
-                        data["tempMax"]         = rt.get("1800")
-                        data["tempMin"]         = rt.get("2000")
-                        data["tempBmsMax"]      = rt.get("2800")
-                        data["tempBmsMin"]      = rt.get("3000")
+                    elif schema == SCHEMA_POWERBOX_G2:
+                        # PowerBox G2 Schema (modelCode 42) — verifiziert via Log
+                        # Master-Points: 5-stellig (10xxx/12xxx/13xxx/14xxx)
+                        # Sub-Modul-Points identisch mit PowerDepot G2
+                        # batteryCapacity aus station/info = Gesamtkapazität direkt
+                        data["packVoltage"] = rt.get("13500") if rt.get("13500") is not None else data.get("packVoltage")
+                        data["cycleCount"]     = rt.get("13900")
 
-                        cv = _to_float(rt.get("3600"))
-                        dv = _to_float(rt.get("3700"))
+                        # Temperaturen
+                        bms_temp = _to_float(rt.get("12400"))
+                        if bms_temp is not None:
+                            data["tempBmsMax"] = bms_temp
+                        cell_temps = [
+                            _to_float(rt.get(str(12500 + i * 100)))
+                            for i in range(4)
+                        ]
+                        valid_temps = [t for t in cell_temps if t is not None and t > 0]
+                        if valid_temps:
+                            data["tempMax"] = max(valid_temps)
+                            data["tempMin"] = min(valid_temps) if len(valid_temps) > 1 else None
+
+                        # Zellspannungen aus Sub-Modul-Daten (10300–11800)
+                        cells = []
+                        for i in range(1, 17):
+                            v = _to_float(rt.get(str(10200 + i * 100)))
+                            if v is not None and v > 0:
+                                cells.append(v)
+                        if cells:
+                            data["cellVoltageMax"] = max(cells)
+                            data["cellVoltageMin"] = min(cells)
+
+                        # Kapazität: station/info = Gesamtkapazität direkt (kein × n_modules)
+                        bc  = _to_float(data.get("batteryCapacity"))
+                        soc = _to_float(data.get("soc"))
+                        soh = _to_float(data.get("soh"))
+                        if bc is not None and soc is not None:
+                            soh_factor = (soh / 100) if (soh is not None and soh <= 100) else 1.0
+                            data["usableKwh"]    = round(bc * soh_factor, 3)
+                            data["remainingKwh"] = round(bc * soh_factor * soc / 100, 3)
+
+                        # Voltage + Current Limits
+                        cv = _to_float(rt.get("18700"))
+                        dv = _to_float(rt.get("18800"))
+                        cl = _to_float(rt.get("18600"))
+                        dl = _to_float(rt.get("19200"))
                         if cv is not None and cv > 0:
                             data["chargeVoltageLimit"]    = cv
                         if dv is not None and dv > 0:
                             data["dischargeVoltageLimit"] = dv
-
-                        # Kapazität: batteryCapacity × n_modules (station_info korrekt für G2)
-                        bc  = _to_float(data.get("batteryCapacity"))
-                        soc_g2 = _to_float(rt.get("800"))
-                        if bc is not None and soc_g2 is not None:
-                            data["usableKwh"]    = bc
-                            data["remainingKwh"] = round(bc * soc_g2 / 100, 3)
+                        if cl is not None and cl > 0:
+                            data["chargeCurrentLimit"]    = cl
+                        if dl is not None and dl > 0:
+                            data["dischargeCurrentLimit"] = dl
 
                         _LOGGER.debug(
-                            "Dyness PowerDepot G2: packVoltage=%s V, SOC=%s%%, "
-                            "cellMax=%s V, cellMin=%s V, tempMax=%s°C",
-                            data.get("packVoltage"), soc_g2,
-                            data.get("cellVoltageMax"), data.get("cellVoltageMin"),
-                            data.get("tempMax"),
+                            "Dyness PowerBox G2: packVoltage=%s V, SOC=%s%%, "
+                            "cells=%d, tempMax=%s°C",
+                            data.get("packVoltage"), soc,
+                            len(cells), data.get("tempMax"),
+                        )
+
+                    elif schema == SCHEMA_POWERDEPOT:
+                        # PowerDepot G2 Schema (modelCode 144) — vollständig verifiziert
+                        # Point 400 = Modulanzahl direkt vom BMS → robuster als _module_sns
+                        n_mod_bms = _to_float(rt.get("400"))
+                        if n_mod_bms is not None and n_mod_bms > 0:
+                            bc_single = _to_float(self.station_info.get("batteryCapacity"))
+                            if bc_single is not None:
+                                data["batteryCapacity"] = round(bc_single * int(n_mod_bms), 3)
+
+                        data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
+                        data["realTimeCurrent"]      = rt.get("700")
+                        data["soc"]                  = rt.get("800")
+                        data["soh"]                  = rt.get("1200")
+                        data["cellVoltageMax"]       = rt.get("1300")
+                        data["cellVoltageMaxModule"] = rt.get("1401")
+                        data["cellVoltageMaxCell"]   = rt.get("1402")
+                        data["cellVoltageMin"]       = rt.get("1500")
+                        data["cellVoltageMinModule"] = rt.get("1601")
+                        data["cellVoltageMinCell"]   = rt.get("1602")
+                        data["tempMax"]              = rt.get("1800")
+                        data["tempMaxModule"]        = rt.get("1901")
+                        data["tempMin"]              = rt.get("2000")
+                        data["tempMinModule"]        = rt.get("2101")
+                        data["tempMosfet"]           = rt.get("2300")
+                        data["tempBmsMax"]           = rt.get("2800")
+                        data["tempBmsMin"]           = rt.get("3000")
+
+                        cv = _to_float(rt.get("3600"))
+                        dv = _to_float(rt.get("3700"))
+                        cl = _to_float(rt.get("3800"))
+                        dl = _to_float(rt.get("3900"))
+                        if cv is not None and cv > 0:
+                            data["chargeVoltageLimit"]    = cv
+                        if dv is not None and dv > 0:
+                            data["dischargeVoltageLimit"] = dv
+                        if cl is not None and cl > 0:
+                            data["chargeCurrentLimit"]    = cl
+                        if dl is not None and dl > 0:
+                            data["dischargeCurrentLimit"] = dl
+
+                        # Kapazität aus BMS-Modulanzahl (robust gegen leere _module_sns)
+                        bc  = _to_float(data.get("batteryCapacity"))
+                        soc_pd = _to_float(rt.get("800"))
+                        soh_pd = _to_float(rt.get("1200"))
+                        if bc is not None and soc_pd is not None:
+                            soh_factor = (soh_pd / 100) if (soh_pd is not None and soh_pd <= 100) else 1.0
+                            data["usableKwh"]    = round(bc * soh_factor, 3)
+                            data["remainingKwh"] = round(bc * soh_factor * soc_pd / 100, 3)
+
+                        _LOGGER.debug(
+                            "Dyness PowerDepot G2: n_modules=%s, batteryCapacity=%s kWh, "
+                            "SOC=%s%%, packVoltage=%s V, tempMosfet=%s°C",
+                            n_mod_bms, data.get("batteryCapacity"),
+                            soc_pd, data.get("packVoltage"), data.get("tempMosfet"),
                         )
 
                     elif schema == SCHEMA_CYGNI:
@@ -857,7 +938,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # 165  = Heat Dissipation Temperature
                         # 166  = Module Temperature
 
-                        data["packVoltage"] = rt.get("170")
+                        data["packVoltage"] = rt.get("170") if rt.get("170") is not None else data.get("packVoltage")
                         data["soc"]         = rt.get("2010")
                         data["soh"]         = rt.get("2011")
                         data["temp"]        = rt.get("2003")
