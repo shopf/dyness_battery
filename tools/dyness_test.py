@@ -1,6 +1,17 @@
 """
-Dyness API Tester v4.0
-Testet v1 (bestehende API) UND v2 (neue API) für alle Dyness Geräteserien.
+Dyness API Tester v4.1
+Testet v1 (inkl. neu entdeckter Endpunkte aus offizieller Swagger-Doku)
+UND v2 (neue API) für alle Dyness Geräteserien.
+
+Neu in v4.1 (aus Swagger-Dokumentation):
+  - /v1/device/getBindDeviceSnListByCurrentUserId  (GET, einfacher Discovery-Call)
+  - /v1/device/houseHold/list   (liefert masterSlaveStatus + parentCode — Issue #31)
+  - /v1/storage/detail          (GET, kompakte Alternative zu household/storage/detail)
+  - /v1/device/getEnergyDataBySn (Energie-Zähler Tag/Gesamt)
+  - /v1/alarm/query  FIX: korrekter Body mit deviceSnList (Array) statt deviceSn
+  - GET-Endpunkte korrekt implementiert: kein JSON-Body, Query-Params,
+    Signatur-String-Methode "GET" statt "POST" (vorher fälschlich als POST
+    mit leeren/fehlenden Pflichtfeldern aufgerufen -> HTTP 500)
 
 Geräteserien mit v2-Dokumentation:
   - Low-voltage battery (DL5, PowerDepot G2, PowerBox G2, Junior Box)
@@ -58,8 +69,8 @@ def get_md5(body: str) -> str:
     return base64.b64encode(hashlib.md5(body.encode("utf-8")).digest()).decode("utf-8")
 
 
-def get_signature(secret: str, content_md5: str, date: str, path: str) -> str:
-    sts = f"POST\n{content_md5}\napplication/json\n{date}\n{path}"
+def get_signature(secret: str, method: str, content_md5: str, date: str, path: str) -> str:
+    sts = f"{method}\n{content_md5}\napplication/json\n{date}\n{path}"
     return base64.b64encode(
         hmac.new(secret.encode("utf-8"), sts.encode("utf-8"), "sha1").digest()
     ).decode("utf-8")
@@ -69,7 +80,7 @@ def _post(base_url: str, path: str, body_dict: dict) -> dict:
     date = formatdate(timeval=None, localtime=False, usegmt=True)
     body = json.dumps(body_dict, separators=(',', ':'), sort_keys=True)
     md5  = get_md5(body)
-    sig  = get_signature(API_SECRET, md5, date, path)
+    sig  = get_signature(API_SECRET, "POST", md5, date, path)
     headers = {
         "Content-Type": "application/json;charset=UTF-8",
         "Content-MD5":  md5,
@@ -84,8 +95,60 @@ def _post(base_url: str, path: str, body_dict: dict) -> dict:
         return {"error": str(e), "code": "ERR"}
 
 
+def _get(base_url: str, path: str, query_params: dict, sign_with_query: bool = False) -> dict:
+    """Für GET-Endpunkte laut Swagger-Doku (z.B. /v1/storage/detail,
+    /v1/device/getBindDeviceSnListByCurrentUserId). Kein JSON-Body — Parameter als
+    Query-String, Signatur nutzt Methode "GET".
+
+    sign_with_query=False: canonical resource = nur der Pfad (wie bei POST gehandhabt)
+    sign_with_query=True:  canonical resource = Pfad + "?" + sortierter Query-String
+                            (üblich bei Aliyun-artigen Signaturschemata für GET)
+
+    Wir wissen noch nicht, welche Variante Dyness erwartet — bei 401 ACCESS_DENIED
+    auf Variante A probiert das Script automatisch Variante B (siehe api_v1_get).
+    """
+    date = formatdate(timeval=None, localtime=False, usegmt=True)
+    md5  = get_md5("")  # GET hat keinen Body -> MD5 des leeren Strings
+
+    if sign_with_query and query_params:
+        qs = "&".join(f"{k}={query_params[k]}" for k in sorted(query_params))
+        canonical_path = f"{path}?{qs}"
+    else:
+        canonical_path = path
+
+    sig = get_signature(API_SECRET, "GET", md5, date, canonical_path)
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "Content-MD5":  md5,
+        "Date":         date,
+        "Authorization": f"API {API_ID}:{sig}",
+    }
+    try:
+        r = requests.get(f"{base_url}{path}", headers=headers,
+                         params=query_params, timeout=15)
+        return r.json()
+    except Exception as e:
+        return {"error": str(e), "code": "ERR"}
+
+
 def api_v1(path, body): return _post(API_BASE_V1, path, body)
 def api_v2(path, body): return _post(API_BASE_V2, path, body)
+
+def api_v1_get(path, params=None):
+    """Versucht GET zuerst ohne Query-String in der Signatur (Variante A).
+    Bei 401 ACCESS_DENIED wird automatisch Variante B (Query-String signiert) probiert,
+    damit wir aus dem Output direkt sehen welche für Dyness korrekt ist."""
+    params = params or {}
+    res_a = _get(API_BASE_V1, path, params, sign_with_query=False)
+    if str(res_a.get("code")) == "401":
+        res_b = _get(API_BASE_V1, path, params, sign_with_query=True)
+        res_b["_signature_variant"] = "B (Query-String signiert)"
+        if str(res_b.get("code")) != "401":
+            return res_b
+        res_a["_signature_variant"] = "A (nur Pfad signiert) — Variante B ebenfalls 401"
+        return res_a
+    res_a["_signature_variant"] = "A (nur Pfad signiert)"
+    return res_a
 
 
 def is_ok(result: dict) -> bool:
@@ -96,10 +159,13 @@ def is_ok(result: dict) -> bool:
     return code in ("0", "200") or result.get("code") == 0
 
 
-def print_result(label, path, body, result, ver="v1"):
+def print_result(label, path, body, result, ver="v1", http_method="POST"):
     print(SEP)
     print(f"[{ver}] {label}")
-    print(f"Path: {path}  Body: {json.dumps(body, ensure_ascii=False)}")
+    if http_method == "GET":
+        print(f"Path: {path}  Query: {json.dumps(body, ensure_ascii=False)}")
+    else:
+        print(f"Path: {path}  Body: {json.dumps(body, ensure_ascii=False)}")
     print(SEP)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     print()
@@ -241,6 +307,84 @@ def analyze_running_data(result):
             print(f"    {k}: {v}")
     if len(nuls) == len(data):
         print("  ⚠️  Alle Felder null — kein Wechselrichter (normal für reine Batterien)")
+    print()
+
+
+# Codetabellen laut Swagger-Schema (RequestOpenApiDeviceJuniorDetailDto / household/storage/detail)
+BATTERY_CATEGORY_CODES = {
+    "0": "Other", "1": "Raymond Junior", "2": "Raymond Household Low-Voltage",
+    "3": "Raymond Battery Cluster", "4": "Solis", "5": "Commercial",
+}
+PRODUCT_TYPE_CODES = {
+    "0": "Other", "1": "Battery System", "2": "Inverter", "3": "Commercial",
+}
+MASTER_SLAVE_CODES = {"1": "Master", "2": "Slave"}
+COMM_STATUS_CODES = {"1": "Online", "2": "Offline", "3": "Breakdown"}
+
+
+def _code_lookup(table, val, field_label):
+    """Löst einen Code auf; markiert unbekannte Codes explizit als Finding statt sie
+    als generisches 'unbekannt' zu verstecken — das können reale, neue Werte sein,
+    die noch nicht in der Swagger-Doku stehen."""
+    key = str(val)
+    if key in table:
+        return f"{val} ({table[key]})"
+    return f"{val} (⚠️ Code nicht in Doku — bitte als Issue melden, Feld: {field_label})"
+
+
+def analyze_household_detail(result):
+    """Analysiert household/storage/detail (Endpunkt4-Schema) inkl. neuer Felder
+    und löst die numerischen Kategorie-Codes in Klartext auf."""
+    print(f"\n{SEP2}\n  Analyse: household/storage/detail (vollständiges Schema)\n{SEP2}")
+    data = result.get("data") or {}
+    if not data:
+        print("  ⚠️  Keine Daten")
+        return
+
+    FIELDS = {
+        "deviceName": "Gerätename", "deviceModelName": "Modellname",
+        "deviceModelCode": "Modell-Code", "brand": "Marke", "factory": "Hersteller",
+        "firmwareVersion": "Firmware-Version", "mpptVersion": "MPPT-Version",
+        "communicationProtocolVersion": "Kommunikationsprotokoll-Version",
+        "deviceType": "Gerätetyp", "deviceTypeCode": "Gerätetyp-Code",
+        "batteryCategory": "Batterie-Kategorie", "productType": "Produkttyp",
+        "masterSlaveStatus": "Master/Slave-Status",
+        "deviceCommunicationStatus": "Kommunikationsstatus",
+        "deviceCommunicationStatusCode": "Kommunikationsstatus-Code",
+        "voltage": "Nennspannung", "voltageUnit": "Spannungseinheit",
+        "current": "Nennstrom", "currentUnit": "Stromeinheit",
+        "energy": "Nennkapazität (kWh)", "installedPower": "Installierte Leistung (kWh)",
+        "collectorSn": "Dongle-SN", "meterSn": "Shelly-Meter-SN",
+        "stationId": "Stations-ID", "stationName": "Stationsname",
+        "stationType": "Stationstyp", "systemType": "System-Typ",
+        "position": "Standort", "imgAddress": "Bild-URL",
+        "otaResult": "OTA-Update-Ergebnis", "otaMpptResult": "MPPT-Update-Ergebnis",
+        "createTime": "Erstellt am", "dataUpdateTime": "Letztes Daten-Update",
+    }
+
+    present = []
+    for field, label in FIELDS.items():
+        val = data.get(field)
+        if val is None or val == "":
+            continue
+        display = val
+        if field == "batteryCategory":
+            display = _code_lookup(BATTERY_CATEGORY_CODES, val, "batteryCategory")
+        elif field == "productType":
+            display = _code_lookup(PRODUCT_TYPE_CODES, val, "productType")
+        elif field == "masterSlaveStatus":
+            display = _code_lookup(MASTER_SLAVE_CODES, val, "masterSlaveStatus")
+        elif field == "deviceCommunicationStatusCode":
+            display = _code_lookup(COMM_STATUS_CODES, val, "deviceCommunicationStatusCode")
+        present.append((field, display, label))
+
+    print("  ✅ Vorhandene Felder:")
+    for field, display, label in present:
+        print(f"    {field:<32} = {str(display):<35} ({label})")
+
+    extra = [k for k in data if k not in FIELDS]
+    if extra:
+        print(f"\n  🆕 Unbekannte Felder (nicht in Endpunkt4-Schema): {', '.join(f'{k}={data[k]}' for k in extra)}")
     print()
 
 
@@ -573,7 +717,7 @@ def print_summary(results, device_model):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 print(SEP)
-print("Dyness API Tester v4.1 — v1 + v2 Kompatibilitätstest (alle Serien)")
+print("Dyness API Tester v4.1 — v1 (erweitert) + v2 Kompatibilitätstest (alle Serien)")
 print(SEP)
 
 device_sn = DEVICE_SN.strip()
@@ -612,7 +756,8 @@ res = api_v1("/v1/device/bindSn", body_full)
 print_result("Gerät binden", "/v1/device/bindSn", body_full, res, "v1")
 
 res = api_v1("/v1/device/household/storage/detail", body_full)
-print_result("Storage Detail", "/v1/device/household/storage/detail", body_full, res, "v1")
+print_result("Storage Detail (household)", "/v1/device/household/storage/detail", body_full, res, "v1")
+analyze_household_detail(res)
 if is_ok(res):
     device_model = (res.get("data") or {}).get("deviceModelName", device_model)
 
@@ -621,6 +766,98 @@ print_result("Storage Liste [workStatus]", "/v1/device/storage/list", body_full,
 
 res = api_v1("/v1/station/info", body_sn)
 print_result("Anlageninfo", "/v1/station/info", body_sn, res, "v1")
+
+# 🆕 Neu aus Swagger-Doku entdeckt — mögliche Alternativen/Ergänzungen:
+
+# GET-Endpunkt, listet alle gebundenen SNs des Accounts — einfacherer Discovery-Call
+res = api_v1_get("/v1/device/getBindDeviceSnListByCurrentUserId")
+print_result("🆕 Gebundene SN-Liste (Account)", "/v1/device/getBindDeviceSnListByCurrentUserId", {}, res, "v1", "GET")
+print(f"  Signatur-Variante verwendet: {res.get('_signature_variant', '?')}")
+print()
+
+# Alternative zu storage/list — liefert zusätzlich masterSlaveStatus + parentCode
+# (relevant für Sub-Modul/Combiner-Box Erkennung, siehe Issue #31)
+# Schema: RequestOpenApiDeviceJuniorListDto — deviceType ist PFLICHT und kodiert:
+#   1 = Micro ESS, 2 = Junior Box, 3 = household pure low-voltage battery,
+#   4 = household high-voltage battery cluster
+# Da wir das Mapping vom Gerätemodell auf den Code nicht zuverlässig kennen,
+# testen wir alle vier Typen und zeigen, welcher (wenn überhaupt) Daten liefert.
+DEVICE_TYPE_CODES = {
+    1: "Micro ESS",
+    2: "Junior Box",
+    3: "Household pure low-voltage battery",
+    4: "Household high-voltage battery cluster",
+}
+OPERATION_PERMISSION_CODES = {
+    "0": "View", "1": "Controllable", "2": "Owner", "3": "Super Management", "4": "Operation & Maintenance",
+}
+
+def analyze_household_list_entry(entry):
+    """Analysiert einen einzelnen Eintrag aus houseHold/list (Endpunkt1-Schema)."""
+    FIELDS = {
+        "deviceSn": "Geräte-SN", "collectorSn": "Dongle-SN", "deviceName": "Gerätename",
+        "deviceModelName": "Modellname", "deviceModelCode": "Modell-Code",
+        "factory": "Hersteller", "firmwareVersion": "Firmware-Version",
+        "batteryCategory": "Batterie-Kategorie", "productType": "Produkttyp",
+        "masterSlaveStatus": "Master/Slave-Flag",
+        "parentCode": "Parent-Geräte-Code", "parentName": "Parent-Gerätename",
+        "deviceCommunicationStatus": "Kommunikationsstatus",
+        "deviceCommunicationStatusCode": "Kommunikationsstatus-Code",
+        "operationPermission": "Berechtigung", "workStatus": "Arbeitsstatus",
+        "stationId": "Stations-ID", "stationName": "Stationsname",
+        "stationType": "Stationstyp", "systemType": "System-Typ",
+        "position": "Standort", "createTime": "Erstellt am",
+    }
+    print("  ── Geräte-Eintrag ──")
+    for field, label in FIELDS.items():
+        val = entry.get(field)
+        if val is None or val == "":
+            continue
+        display = val
+        if field == "batteryCategory":
+            display = _code_lookup(BATTERY_CATEGORY_CODES, val, "batteryCategory")
+        elif field == "productType":
+            display = _code_lookup(PRODUCT_TYPE_CODES, val, "productType")
+        elif field == "masterSlaveStatus":
+            # Endpunkt1-Doku nennt hier Text "master"/"slave" statt Zahlencode -> beide Formen akzeptieren
+            if str(val).lower() in ("master", "slave"):
+                display = val
+            else:
+                display = _code_lookup(MASTER_SLAVE_CODES, val, "masterSlaveStatus")
+        elif field == "operationPermission":
+            display = _code_lookup(OPERATION_PERMISSION_CODES, val, "operationPermission")
+        print(f"    {field:<32} = {str(display):<35} ({label})")
+    extra = [k for k in entry if k not in FIELDS]
+    if extra:
+        print(f"    🆕 Unbekannte Felder: {', '.join(f'{k}={entry[k]}' for k in extra)}")
+    if entry.get("parentCode"):
+        print(f"    💡 parentCode={entry['parentCode']!r} gesetzt — relevant für Issue #31 "
+              f"(Combiner-Box / Sub-Modul-Hierarchie)")
+
+
+print(f"\n{SEP2}\n  🆕 Household Liste — Test aller deviceType-Codes\n{SEP2}")
+household_ok = False
+for dtype, dtype_label in DEVICE_TYPE_CODES.items():
+    body_household = {"deviceSn": device_sn, "deviceType": dtype, "pageNum": 1, "pageSize": 20}
+    res = api_v1("/v1/device/houseHold/list", body_household)
+    print_result(f"🆕 Household Liste (deviceType={dtype} = {dtype_label})",
+                "/v1/device/houseHold/list", body_household, res, "v1")
+    entries = (res.get("data") or {}).get("list") or []
+    if is_ok(res) and entries:
+        household_ok = True
+        print(f"  ✅ deviceType={dtype} ({dtype_label}) liefert Daten für dieses Gerät!\n")
+        for entry in entries:
+            analyze_household_list_entry(entry)
+        break
+if not household_ok:
+    print(f"  ⚠️  Kein deviceType-Code lieferte Daten — evtl. anderer Pflichtfeldwert benötigt.")
+print()
+
+# GET-Endpunkt laut Swagger (Query-Param, kein JSON-Body) — kompakte Alternative zu household/storage/detail
+res = api_v1_get("/v1/storage/detail", {"deviceSn": device_sn})
+print_result("🆕 Storage Detail (kompakt, GET)", "/v1/storage/detail", {"deviceSn": device_sn}, res, "v1", "GET")
+print(f"  Signatur-Variante verwendet: {res.get('_signature_variant', '?')}")
+print()
 
 # ── v1: Echtzeit Master ───────────────────────────────────────────────────────
 res = api_v1("/v1/device/realTime/data", body_full)
@@ -651,6 +888,15 @@ if dongle_sn: body_power["collectorSn"] = dongle_sn
 res = api_v1("/v1/device/getLastPowerDataBySn", body_power)
 print_result("Letzte Leistungsdaten", "/v1/device/getLastPowerDataBySn", body_power, res, "v1")
 
+# 🆕 Energie-Zähler (Tages-/Gesamt-Lade-/Entlade-/PV-Energie) — laut Doku "IGEN series only",
+# trotzdem hier getestet, da unklar ob das auch für Dyness-Batterien greift.
+# Hinweis: leeres dateTime wurde vom Server abgelehnt ("request parameter is not null") ->
+# heutiges Datum (YYYY-MM-DD) mitgeben.
+from datetime import date as _date
+body_energy = {"deviceSn": device_sn, "dateTime": _date.today().isoformat()}
+res = api_v1("/v1/device/getEnergyDataBySn", body_energy)
+print_result("🆕 Energie-Daten (Tag/Gesamt)", "/v1/device/getEnergyDataBySn", body_energy, res, "v1")
+
 # ── v1: Sub-Module ────────────────────────────────────────────────────────────
 for sn in sub_sns:
     mb = {"deviceSn": sn, "collectorSn": dongle_sn} if dongle_sn else {"deviceSn": sn}
@@ -674,10 +920,26 @@ analyze_running_data(res)
 
 for label, path, body in [
     ("Firmware-Version",    "/v1/device/checkVersion",  body_full),
-    ("Alarm-/Fehlerliste",  "/v1/alarm/query",          body_full),
 ]:
     res = api_v1(path, body)
     print_result(label, path, body, res, "v1")
+
+# ✅ Korrigiert (vorher falscher Body — siehe Issue #32):
+# alarm/query erwartet "deviceSnList" als Array, nicht "deviceSn" als String,
+# und pageNum/pageSize sind required.
+body_alarm_v1 = {"deviceSnList": [device_sn], "pageNum": 1, "pageSize": 20}
+res = api_v1("/v1/alarm/query", body_alarm_v1)
+print_result("Alarm-/Fehlerliste (korrigiert)", "/v1/alarm/query", body_alarm_v1, res, "v1")
+if is_ok(res):
+    alarm_data = (res.get("data") or {}).get("pageDate") or {}
+    alarm_list = alarm_data.get("list") or []
+    print(f"  ✅ Alarme gesamt: {alarm_data.get('total', 0)}  "
+          f"(gelesen: {(res.get('data') or {}).get('readCount', '?')}, "
+          f"ungelesen: {(res.get('data') or {}).get('unReadCount', '?')})")
+    for a in alarm_list[:5]:
+        print(f"    [{a.get('eventGrade','?')}] {a.get('eventCode','?')} "
+              f"— {a.get('eventContent','?')}  ({a.get('beginTime','?')})")
+    print()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # v2 TESTS
