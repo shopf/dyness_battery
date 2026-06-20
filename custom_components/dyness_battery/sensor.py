@@ -141,13 +141,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
             key in ALWAYS_REGISTER
             or (
                 # Alarm-Sensoren nur für Schemas die sie implementieren
-                key not in _ALARM_SENSOR_KEYS
-                or schema in _ALARM_SCHEMAS
-            ) and (
+                (key not in _ALARM_SENSOR_KEYS or schema in _ALARM_SCHEMAS)
                 # tempMax/tempMin nur für Schemas die sie setzen
-                key not in _TEMP_MAXMIN_KEYS
-                or schema in _TEMP_MAXMIN_SCHEMAS
-            ) and available_data.get(key) is not None
+                and (key not in _TEMP_MAXMIN_KEYS or schema in _TEMP_MAXMIN_SCHEMAS)
+                # Wert muss vorhanden sein
+                and available_data.get(key) is not None
+            )
         )
     ])
 

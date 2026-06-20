@@ -342,7 +342,7 @@ def analyze_household_detail(result):
         return
 
     FIELDS = {
-        "deviceName": "Gerätename", "deviceModelName": "Modellname",
+        "deviceSn": "Geräte-SN", "deviceName": "Gerätename", "deviceModelName": "Modellname",
         "deviceModelCode": "Modell-Code", "brand": "Marke", "factory": "Hersteller",
         "firmwareVersion": "Firmware-Version", "mpptVersion": "MPPT-Version",
         "communicationProtocolVersion": "Kommunikationsprotokoll-Version",

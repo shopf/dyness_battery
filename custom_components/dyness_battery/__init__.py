@@ -918,9 +918,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                         # cycleCount aus Sub-Modul-Daten aggregieren (Point 13900)
                         # kein Master-Point verfügbar → Mittelwert über alle Module
+                        # WICHTIG: self.module_data direkt verwenden, da data["module_data"]
+                        # erst nach dem Schema-Block gesetzt wird (Zeile ~1249).
                         mod_cycles = [
                             _to_float(m.get("cycleCount"))
-                            for m in (data.get("module_data") or {}).values()
+                            for m in self.module_data.values()
                             if m.get("cycleCount") is not None
                         ]
                         if mod_cycles:
@@ -929,7 +931,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # temp (Durchschnitt) aus Sub-Modul-Daten
                         mod_temps = [
                             _to_float(m.get("temp"))
-                            for m in (data.get("module_data") or {}).values()
+                            for m in self.module_data.values()
                             if m.get("temp") is not None
                         ]
                         if mod_temps:
@@ -1251,11 +1253,17 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     # ── usableKwh / remainingKwh Berechnung ──────────────────
                     # Stack100: bereits via Point 1600/1700 gesetzt → überspringen.
+                    # PowerDepot G2 + PowerBox G2: bereits im Schema-Block korrekt
+                    #   berechnet (batteryCapacity × n_modules × SOH × SOC) → überspringen.
+                    #   WICHTIG: der generische Block würde die korrekte Berechnung mit
+                    #   Ah-Werten aus Sub-Modul Points (13600/13800) überschreiben, die
+                    #   nur einen Teilbereich der Kapazität repräsentieren und systematisch
+                    #   zu niedrig sind (z.B. 5.52 kWh statt 15.36 kWh bei 3 Modulen).
                     # DL5: Strategie 1 (Ah-basiert) deaktiviert — Ah-Werte aus 13600/13800
                     #   repräsentieren nur einen Teilbereich der Kapazität und unterschätzen
                     #   systematisch (z.B. 3.5 kWh statt 10.24 kWh). batteryCapacity × SOC zuverlässiger.
                     # Alle anderen: Strategie 1 (Ah) wenn verfügbar, sonst SOC-Fallback.
-                    if schema not in (SCHEMA_STACK100,):
+                    if schema not in (SCHEMA_STACK100, SCHEMA_POWERDEPOT, SCHEMA_POWERBOX_G2):
                         try:
                             mod_data = data.get("module_data", {})
                             total_remain_kwh = 0.0
