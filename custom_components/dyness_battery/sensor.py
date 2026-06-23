@@ -116,14 +116,14 @@ _ALARM_SENSOR_KEYS = {
 # Schemas die Alarm-Sensoren implementieren
 _ALARM_SCHEMAS = {
     "tower", "stack100", "powerdepot", "powerbox_pro",
-    "powerbox_g2", "junior", "dl5",
+    "powerbox_g2", "junior", "dl5", "powerbrick",
 }
 
 # tempMax / tempMin nur für Schemas die sie tatsächlich setzen
 _TEMP_MAXMIN_KEYS = {"tempMax", "tempMin"}
 _TEMP_MAXMIN_SCHEMAS = {
     "tower", "stack100", "powerdepot", "powerbox_pro",
-    "powerbox_g2", "dl5",
+    "powerbox_g2", "dl5", "powerbrick",
 }
 
 
@@ -133,22 +133,42 @@ async def async_setup_entry(hass, entry, async_add_entities):
     schema = available_data.get("_schema", "unknown")
 
     # Pack-Level Sensoren — schema-basiert filtern
-    async_add_entities([
-        DynessSensor(coordinator, entry, key, translation_key,
-                     unit, device_class, state_class, icon, precision, entity_category)
-        for key, translation_key, unit, device_class, state_class, icon, precision, entity_category in SENSORS
-        if (
+    #
+    # WICHTIG (Issue #29): available_data ist nur der Snapshot beim Plattform-Setup.
+    # Lieferte das allererste Update für einen optionalen Sensor (z.B. wegen
+    # Rate-Limiting auf einem Sub-Modul-Call) keinen Wert, wurde die Entity früher
+    # NIE registriert — auch wenn spätere Updates den Wert zuverlässig lieferten.
+    # Das betraf u.a. chargeCurrentLimit, alarmStatus1/2, cycleCount auf Master.
+    # Lösung: wie bei den Modul-Sensoren ein Listener, der bei jedem Update prüft,
+    # ob bisher unregistrierte Pack-Sensoren inzwischen einen Wert haben.
+    known_pack_keys: set = set()
+
+    def _pack_sensor_allowed(key: str, data: dict) -> bool:
+        return (
             key in ALWAYS_REGISTER
             or (
-                # Alarm-Sensoren nur für Schemas die sie implementieren
                 (key not in _ALARM_SENSOR_KEYS or schema in _ALARM_SCHEMAS)
-                # tempMax/tempMin nur für Schemas die sie setzen
                 and (key not in _TEMP_MAXMIN_KEYS or schema in _TEMP_MAXMIN_SCHEMAS)
-                # Wert muss vorhanden sein
-                and available_data.get(key) is not None
+                and data.get(key) is not None
             )
         )
-    ])
+
+    def _add_new_pack_sensors() -> None:
+        data = coordinator.data or {}
+        new_entities = [
+            DynessSensor(coordinator, entry, key, translation_key,
+                         unit, device_class, state_class, icon, precision, entity_category)
+            for key, translation_key, unit, device_class, state_class, icon, precision, entity_category in SENSORS
+            if key not in known_pack_keys and _pack_sensor_allowed(key, data)
+        ]
+        if new_entities:
+            for key, *_rest in SENSORS:
+                if key not in known_pack_keys and _pack_sensor_allowed(key, data):
+                    known_pack_keys.add(key)
+            async_add_entities(new_entities)
+
+    _add_new_pack_sensors()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_pack_sensors))
 
     # Modul-Sensoren — dynamisch bei jedem neuen Modul registrieren
     from homeassistant.helpers import entity_registry as er
