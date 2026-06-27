@@ -236,7 +236,7 @@ def analyze_rt_points(pts, label=""):
         "10300": "Cell 01 [DL5/JB]",
         "11200": "Cell 01 [Stack100/TP7/Tower]",
         "12400": "SOC (%) [G2]", "12500": "Temp1 (°C) [G2]", "12600": "Temp2 (°C) [G2]",
-        "13400": "SOC genau (%) [G2]", "13500": "Spannung (V) [G2/DL5 Modul]",
+        "13400": "SOC (%) [G2/PowerDepot] / Strom (A) [Stack100-Sub-Modul]", "13500": "Spannung (V) [G2/DL5 Modul]",
         "13900": "Zyklen [G2/DL5 Modul]",
     }
 
@@ -278,9 +278,9 @@ def analyze_rt_points(pts, label=""):
     if "800" in pts:
         print(f"    📋 SOC-Schema: Standard (Point 800 = {pts['800']}%)")
     elif "1400" in pts and pts.get("1400") and str(pts["1400"]).replace('.','').isdigit() and float(pts["1400"]) <= 100:
-        print(f"    📋 SOC-Schema: Tower/TP7 (Point 1400 = {pts['1400']}%)")
-    elif "13400" in pts:
-        print(f"    📋 SOC-Schema: PowerBox G2 (Point 13400 = {pts['13400']}%)")
+        print(f"    📋 SOC-Schema: Tower/TP7/Stack100 (Point 1400 = {pts['1400']}%)")
+    elif "13400" in pts and pts.get("13400") and str(pts.get("13400","")).replace('.','').replace('-','').isdigit() and -200 < float(pts.get("13400",0)) <= 100:
+        print(f"    📋 SOC-Schema: PowerBox G2 (Point 13400 = {pts['13400']}%) — Hinweis: bei Stack100-Sub-Modulen ist 13400 der Strom (A), nicht SOC")
     else:
         print(f"    ⚠️  SOC-Schema: UNBEKANNT — bitte als Issue melden!")
 

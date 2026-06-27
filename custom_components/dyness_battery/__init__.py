@@ -40,7 +40,10 @@ STALE_ENTITY_KEYS = {
 # API Rate-Limit: max ~60 Calls/Stunde = 1/Minute
 # Pro Update: 3 Basis-Calls + 2 pro Sub-Modul
 # 1-2 Module → 5 Min, 3-4 Module → 10 Min, 5+ Module → 15 Min
-_MIN_CALL_INTERVAL = 1.5
+# Rate-Limiting: Dyness API erlaubt ≤ 2 Anfragen/Sekunde (offiziell bestätigt via Dyness-Doku).
+# 0.5s ist konservativ innerhalb der Spec und reduziert Update-Zeit bei großen Setups deutlich.
+# Vorher: 1.5s (zu konservativ). Geändert in v2.3.9 basierend auf User-Feedback (Issue #32).
+_MIN_CALL_INTERVAL = 0.5
 _RATE_LIMIT_BACKOFF = 10
 _MAX_RETRIES = 3
 
@@ -269,6 +272,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self._module_sns: list[str] = []
         self._last_call_time: float = 0.0
         self._storage_list_cycle: int = 0  # Zähler für storage/list Throttling
+        # Optimierung (Issue #32): getLastRunningDataBySn überspringen wenn einmal
+        # alle Felder null waren — typisch bei reinen Batteriesystemen ohne Wechselrichter.
+        # Wird auf False zurückgesetzt wenn sich das Gerät-Schema ändert (z.B. Wechselrichter
+        # nachgerüstet), was einen HA-Reload erfordert.
+        self._running_data_all_null: bool = False
 
     async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict) -> dict:
         """Rate-limitierter API-Aufruf mit Retry bei HTTP 429."""
@@ -498,40 +506,50 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         self.module_data = new_module_data
 
                     # ── getLastRunningDataBySn (bei jedem Update) ─────────────
-                    try:
-                        run_body = {"deviceSn": self.device_sn}
-                        if self.dongle_sn:
-                            run_body["collectorSn"] = self.dongle_sn
-                        run_result = await self._call(
-                            session, "/v1/device/getLastRunningDataBySn", run_body
+                    # Optimierung (Issue #32): Nach erstem All-Null-Response überspringen.
+                    # Spart 1 API-Call/Zyklus bei reinen Batteriesystemen (Tower, PowerDepot,
+                    # PowerBrick, Stack100 etc.) ohne Wechselrichter.
+                    if self._running_data_all_null:
+                        _LOGGER.debug(
+                            "Dyness getLastRunningDataBySn: übersprungen "
+                            "(alle Felder waren null beim letzten Aufruf)"
                         )
-                        if _is_success(run_result):
-                            self.running_data = run_result.get("data", {}) or {}
-                            all_null = all(
-                                v is None or v == ""
-                                for v in self.running_data.values()
+                    else:
+                        try:
+                            run_body = {"deviceSn": self.device_sn}
+                            if self.dongle_sn:
+                                run_body["collectorSn"] = self.dongle_sn
+                            run_result = await self._call(
+                                session, "/v1/device/getLastRunningDataBySn", run_body
                             )
-                            if all_null:
-                                _LOGGER.debug(
-                                    "Dyness getLastRunningDataBySn: Alle %d Felder null "
-                                    "— kein Wechselrichter verbunden (normal bei reinen "
-                                    "Batteriespeichern wie Junior Box oder Powerbox G2)",
-                                    len(self.running_data)
+                            if _is_success(run_result):
+                                self.running_data = run_result.get("data", {}) or {}
+                                all_null = all(
+                                    v is None or v == ""
+                                    for v in self.running_data.values()
                                 )
+                                if all_null:
+                                    self._running_data_all_null = True
+                                    _LOGGER.debug(
+                                        "Dyness getLastRunningDataBySn: Alle %d Felder null "
+                                        "— kein Wechselrichter verbunden. Endpoint wird ab "
+                                        "jetzt übersprungen (spart 1 Call/Zyklus).",
+                                        len(self.running_data)
+                                    )
+                                else:
+                                    _LOGGER.debug(
+                                        "Dyness getLastRunningDataBySn: %d Felder, "
+                                        "firmwareVersion=%s",
+                                        len(self.running_data),
+                                        self.running_data.get("firmwareVersion")
+                                    )
                             else:
                                 _LOGGER.debug(
-                                    "Dyness getLastRunningDataBySn: %d Felder, "
-                                    "firmwareVersion=%s",
-                                    len(self.running_data),
-                                    self.running_data.get("firmwareVersion")
+                                    "Dyness getLastRunningDataBySn: Code %s – %s",
+                                    run_result.get("code"), run_result.get("info")
                                 )
-                        else:
-                            _LOGGER.debug(
-                                "Dyness getLastRunningDataBySn: Code %s – %s",
-                                run_result.get("code"), run_result.get("info")
-                            )
-                    except Exception as e:
-                        _LOGGER.warning("Dyness getLastRunningDataBySn nicht erreichbar: %s", e)
+                        except Exception as e:
+                            _LOGGER.warning("Dyness getLastRunningDataBySn nicht erreichbar: %s", e)
 
                     # ── Leistungsdaten (bei jedem Update) ────────────────────
                     # UpdateFailed nur noch bei Totalausfall.
@@ -626,6 +644,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     if schema == SCHEMA_STACK100:
                         # Stack100 Schema — Points direkt vom BMS Master
                         data["packVoltage"] = rt.get("1100") if rt.get("1100") is not None else data.get("packVoltage")
+                        # Fix 3 (Issue #28): SOC aus Point 1400 (live, pointNameCn="SOC"),
+                        # nicht aus getLastPowerDataBySn (kann veraltet sein, z.B. Vortag).
+                        if rt.get("1400") is not None:
+                            data["soc"] = rt.get("1400")
                         data["soh"]            = rt.get("1500")
                         data["cycleCount"]     = rt.get("1800")
                         data["energyChargeTotal"] = rt.get("1900")
@@ -1074,15 +1096,23 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["usableKwh"]    = round(bc_val * soh_f, 3)
                             data["remainingKwh"] = round(bc_val * soh_f * soc_pb / 100, 3)
 
-                        # Alarm-Bits (identisch zu PowerDepot G2 — gleiche Point-Struktur)
-                        data["alarmStatus"]  = (
-                            str(rt.get("3200", "0")) != "0"
-                            or str(rt.get("3300", "0")) != "0"
-                        )
+                        # Alarm-Bits PowerBrick (Points 3201-3208, Issue #36):
                         data["alarmSpreadV"] = str(rt.get("3201", "0")) != "0"
                         data["alarmSpreadT"] = str(rt.get("3202", "0")) != "0"
-                        data["alarmAfe"]     = str(rt.get("3400", "0")) != "0"
-                        data["alarmSys"]     = str(rt.get("3500", "0")) != "0"
+                        data["alarmInsul"]   = str(rt.get("3205", "0")) != "0"
+                        data["alarmAfe"]     = str(rt.get("3203", "0")) != "0"
+                        data["alarmBms"]     = str(rt.get("3204", "0")) != "0"
+                        data["alarmSys"]     = (
+                            str(rt.get("3206", "0")) != "0"
+                            or str(rt.get("3207", "0")) != "0"
+                            or str(rt.get("3208", "0")) != "0"
+                        )
+
+                        # Fix 1: Cycle Count (Point 900 = Average Cycle Count)
+                        # Wird im Standby befüllt; bei aktivem Laden/Entladen ggf. leer.
+                        cc_pb = rt.get("900")
+                        if cc_pb is not None and str(cc_pb).strip() not in ("", "0"):
+                            data["cycleCount"] = cc_pb
 
                         # workStatus-Korrektur (wie PowerDepot G2)
                         battery_status_pb = data.get("batteryStatus")
