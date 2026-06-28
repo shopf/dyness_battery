@@ -41,9 +41,9 @@ STALE_ENTITY_KEYS = {
 # Pro Update: 3 Basis-Calls + 2 pro Sub-Modul
 # 1-2 Module → 5 Min, 3-4 Module → 10 Min, 5+ Module → 15 Min
 # Rate-Limiting: Dyness API erlaubt ≤ 2 Anfragen/Sekunde (offiziell bestätigt via Dyness-Doku).
-# 0.5s ist konservativ innerhalb der Spec und reduziert Update-Zeit bei großen Setups deutlich.
-# Vorher: 1.5s (zu konservativ). Geändert in v2.3.9 basierend auf User-Feedback (Issue #32).
-_MIN_CALL_INTERVAL = 0.5
+# 0.8s ist konservativ innerhalb der Spec und reduziert Update-Zeit bei großen Setups deutlich.
+# Vorher: 1.5s (zu konservativ). 0.5s verursachte 429-Burst-Fehler bei Sub-Modul-Calls (Issue #26).
+_MIN_CALL_INTERVAL = 0.8
 _RATE_LIMIT_BACKOFF = 10
 _MAX_RETRIES = 3
 
@@ -499,9 +499,24 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 new_module_data[mid] = _parse_module_points(sn, mid, m_pts)
                                 _LOGGER.debug("Dyness Modul %s: %d Punkte", mid, len(m_pts))
                             else:
-                                _LOGGER.warning("Dyness Modul %s: Code %s", sn, m_result.get("code"))
+                                code = m_result.get("code")
+                                _LOGGER.warning("Dyness Modul %s: Code %s", sn, code)
+                                # Bei 429 oder anderen Fehlern: alten Wert beibehalten statt
+                                # das Modul aus module_data zu entfernen (Issue #26 — Slave
+                                # Sensoren wurden Unavailable wenn nur ein Sub-Modul-Call
+                                # rate-limited wurde, weil new_module_data das Modul nicht
+                                # enthielt und self.module_data dann überschrieben wurde).
+                                if sn in self.module_data:
+                                    new_module_data[sn] = self.module_data[sn]
+                                    _LOGGER.debug(
+                                        "Dyness Modul %s: Letzten bekannten Wert beibehalten "
+                                        "(Code %s)", sn, code
+                                    )
                         except Exception as e:
                             _LOGGER.warning("Dyness Modul %s nicht erreichbar: %s", sn, e)
+                            # Auch bei Exception: alten Wert beibehalten
+                            if sn in self.module_data:
+                                new_module_data[sn] = self.module_data[sn]
                     if new_module_data:
                         self.module_data = new_module_data
 
