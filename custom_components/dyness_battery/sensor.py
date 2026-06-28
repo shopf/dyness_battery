@@ -102,7 +102,7 @@ SENSORS = [
 ALWAYS_REGISTER = {
     "soc", "realTimePower", "realTimeCurrent", "createTime",
     "batteryCapacity", "deviceCommunicationStatus", "firmwareVersion",
-    "workStatus", "batteryStatus",
+    "workStatus", "batteryStatus", "alarmText",
 }
 
 # Alarm-Sensoren die nur für bestimmte Schemas implementiert sind.

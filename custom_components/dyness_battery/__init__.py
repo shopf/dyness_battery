@@ -41,11 +41,15 @@ STALE_ENTITY_KEYS = {
 # Pro Update: 3 Basis-Calls + 2 pro Sub-Modul
 # 1-2 Module → 5 Min, 3-4 Module → 10 Min, 5+ Module → 15 Min
 # Rate-Limiting: Dyness API erlaubt ≤ 2 Anfragen/Sekunde (offiziell bestätigt via Dyness-Doku).
-# 0.8s ist konservativ innerhalb der Spec und reduziert Update-Zeit bei großen Setups deutlich.
-# Vorher: 1.5s (zu konservativ). 0.5s verursachte 429-Burst-Fehler bei Sub-Modul-Calls (Issue #26).
-_MIN_CALL_INTERVAL = 0.8
+# 1.0s hat sich als stabiler Kompromiss erwiesen. 0.5s/0.8s verursachten 429-Burst-Fehler
+# bei Sub-Modul-Calls (Issue #26). 1.5s (original) war zu konservativ.
+_MIN_CALL_INTERVAL = 1.0
 _RATE_LIMIT_BACKOFF = 10
 _MAX_RETRIES = 3
+# Sub-Modul-Calls: kein Retry bei 429 — sofort aufgeben und letzten bekannten Wert
+# beibehalten. Retries mit langen Wartezeiten blockieren den gesamten Update-Zyklus
+# und führen zu stagnierenden Sensoren (Issue #26, v2.3.9.1).
+_MODULE_MAX_RETRIES = 0
 
 # Gültige BMS-Suffixe
 _BMS_SUFFIXES = ("-BMS", "-BDU")
@@ -278,14 +282,19 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         # nachgerüstet), was einen HA-Reload erfordert.
         self._running_data_all_null: bool = False
 
-    async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict) -> dict:
-        """Rate-limitierter API-Aufruf mit Retry bei HTTP 429."""
+    async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict,
+                    max_retries: int = _MAX_RETRIES) -> dict:
+        """Rate-limitierter API-Aufruf mit optionalem Retry bei HTTP 429.
+        
+        max_retries=0 für Sub-Modul-Calls: sofort aufgeben bei 429 statt lange
+        zu warten und den Update-Zyklus zu blockieren (Issue #26).
+        """
         elapsed = time.monotonic() - self._last_call_time
         if elapsed < _MIN_CALL_INTERVAL:
             await asyncio.sleep(_MIN_CALL_INTERVAL - elapsed)
         url = f"{self.api_base}/openapi/ems-device{path}"
         body = json.dumps(body_dict, separators=(',', ':'))
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(max_retries + 1):
             self._last_call_time = time.monotonic()
             headers = _build_headers(self.api_id, self.api_secret, body, path)
             try:
@@ -294,19 +303,20 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         wait = _RATE_LIMIT_BACKOFF * (2 ** attempt)
                         _LOGGER.warning(
                             "Dyness: Rate-Limit (429) auf %s – Retry %d/%d in %ds",
-                            path, attempt + 1, _MAX_RETRIES, wait,
+                            path, attempt + 1, max_retries, wait,
                         )
-                        if attempt < _MAX_RETRIES:
+                        if attempt < max_retries:
                             await asyncio.sleep(wait)
                             continue
-                        return {}
+                        return {"code": "429", "sourceCode": "TOO_MANY_REQUESTS",
+                                "data": None, "info": "TOO_MANY_REQUESTS"}
                     raw_text = await response.text()
                     _LOGGER.debug("Dyness %s: %s", path, raw_text)
                     return json.loads(raw_text)
             except aiohttp.ClientError as e:
                 _LOGGER.warning("Dyness %s Verbindungsfehler (Versuch %d/%d): %s",
-                                path, attempt + 1, _MAX_RETRIES, e)
-                if attempt < _MAX_RETRIES:
+                                path, attempt + 1, max_retries, e)
+                if attempt < max_retries:
                     await asyncio.sleep(2 ** attempt)
                     continue
                 raise
@@ -486,7 +496,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     )
                                     continue  # Abruf überspringen wenn Binding fehlschlägt
                             m_result = await self._call(
-                                session, "/v1/device/realTime/data", {"deviceSn": sn}
+                                session, "/v1/device/realTime/data", {"deviceSn": sn},
+                                max_retries=_MODULE_MAX_RETRIES
                             )
                             if _is_success(m_result):
                                 m_raw = m_result.get("data", []) or []
@@ -943,10 +954,17 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["chargeVoltageLimit"]    = cv
                         if dv is not None and dv > 0:
                             data["dischargeVoltageLimit"] = dv
+                        # Letzten bekannten Wert beibehalten wenn Point fehlt/null (Issue #29):
+                        # chargeCurrentLimit verschwindet wenn ein Zyklus keinen Wert liefert,
+                        # weil data[] jedes Mal neu aufgebaut wird.
                         if cl is not None and cl > 0:
                             data["chargeCurrentLimit"]    = cl
+                        elif self.data and self.data.get("chargeCurrentLimit"):
+                            data["chargeCurrentLimit"]    = self.data["chargeCurrentLimit"]
                         if dl is not None and dl > 0:
                             data["dischargeCurrentLimit"] = dl
+                        elif self.data and self.data.get("dischargeCurrentLimit"):
+                            data["dischargeCurrentLimit"] = self.data["dischargeCurrentLimit"]
 
                         # Alarm Status 1/2 (Points 3200/3300) — bei anderen Schemas
                         # gesetzt, im POWERDEPOT-Block bisher übersehen, obwohl die
