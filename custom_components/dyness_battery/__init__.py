@@ -1007,14 +1007,20 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         if mod_temps:
                             data["temp"] = round(sum(mod_temps) / len(mod_temps), 1)
 
-                        # workStatus: aus batteryStatus ableiten statt aus storage/list
-                        # storage/list zeigt "Fault" obwohl Gerät normal lädt/entlädt
-                        battery_status_pd = data.get("batteryStatus")
-                        if battery_status_pd == "Charging":
-                            data["workStatus"] = "Charging"
-                        elif battery_status_pd == "Discharging":
-                            data["workStatus"] = "Discharging"
+                        # workStatus: direkt aus realTimeCurrent ableiten (Issue #29, seit v2.3.5).
+                        # batteryStatus wird erst NACH dem Schema-Block berechnet (Zeile ~1269),
+                        # deshalb ist data.get("batteryStatus") hier immer None → workStatus
+                        # blieb dauerhaft "Standby". Fix: Strom aus Point 700 direkt auswerten.
+                        current_pd = _to_float(rt.get("700"))
+                        if current_pd is not None:
+                            if current_pd > 1.0:
+                                data["workStatus"] = "Charging"
+                            elif current_pd < -1.0:
+                                data["workStatus"] = "Discharging"
+                            else:
+                                data["workStatus"] = "Standby"
                         else:
+                            # Fallback: Alarm-Bits prüfen
                             alarm_bits_pd = [
                                 rt.get("3200"), rt.get("3201"), rt.get("3202"),
                                 rt.get("3300"), rt.get("3400"), rt.get("3500"),
@@ -1023,12 +1029,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 v is None or str(v) in ("0", "0.0", "")
                                 for v in alarm_bits_pd
                             )
-                            if all_clear_pd and data.get("workStatus") == "Fault":
+                            if all_clear_pd:
                                 data["workStatus"] = "Standby"
-                                _LOGGER.debug(
-                                    "Dyness PowerDepot G2: workStatus 'Fault' → 'Standby' "
-                                    "— alle Alarm-Bits sind 0"
-                                )
 
                         # Alarm-Sensoren — korrekte Point-Mappings (verifiziert)
                         # 3200 = Sammelbyte 1, 3201=Voltage Spread, 3202=MOSFET Temp
@@ -1147,12 +1149,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         if cc_pb is not None and str(cc_pb).strip() not in ("", "0"):
                             data["cycleCount"] = cc_pb
 
-                        # workStatus-Korrektur (wie PowerDepot G2)
-                        battery_status_pb = data.get("batteryStatus")
-                        if battery_status_pb == "Charging":
-                            data["workStatus"] = "Charging"
-                        elif battery_status_pb == "Discharging":
-                            data["workStatus"] = "Discharging"
+                        # workStatus: direkt aus realTimeCurrent ableiten (gleicher Fix wie POWERDEPOT).
+                        current_pb = _to_float(rt.get("700"))
+                        if current_pb is not None:
+                            if current_pb > 1.0:
+                                data["workStatus"] = "Charging"
+                            elif current_pb < -1.0:
+                                data["workStatus"] = "Discharging"
+                            else:
+                                data["workStatus"] = "Standby"
                         else:
                             alarm_bits_pb = [
                                 rt.get("3200"), rt.get("3201"), rt.get("3202"),
@@ -1160,8 +1165,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             ]
                             if all(v is None or str(v) in ("0", "0.0", "")
                                    for v in alarm_bits_pb):
-                                if data.get("workStatus") == "Fault":
-                                    data["workStatus"] = "Standby"
+                                data["workStatus"] = "Standby"
 
                         _LOGGER.debug(
                             "Dyness PowerBrick: batteryCapacity=%s kWh, SOC=%s%%, "
