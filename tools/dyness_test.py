@@ -44,15 +44,15 @@ API_BASE_V1 = "https://open-api.dyness.com/openapi/ems-device"         # Europa 
 # API_BASE_V1 = "https://apacopen-api.dyness.com/openapi/ems-device"   # Asia-Pacific v1
 
 # Wähle deine Region für v2 (nur eine Zeile einkommentieren):
-API_BASE_V2 = "https://eu-openapi.dyness.com/openapi/emsdevice"        # Europa v2
-# API_BASE_V2 = "https://apacopen-api.dyness.com/openapi/emsdevice"    # Asia-Pacific v2
-# API_BASE_V2 = "https://na-openapi.dyness.com/openapi/emsdevice"      # North America v2
-# API_BASE_V2 = "https://latam-openapi.dyness.com/openapi/emsdevice"   # Latin America v2
-# API_BASE_V2 = "https://me-openapi.dyness.com/openapi/emsdevice"      # Middle East v2
-# API_BASE_V2 = "https://af-openapi.dyness.com/openapi/emsdevice"      # Africa v2
-# API_BASE_V2 = "https://sa-openapi.dyness.com/openapi/emsdevice"      # South America v2
-# API_BASE_V2 = "https://global-openapi.dyness.com/openapi/emsdevice"  # Global v2
-# API_BASE_V2 = "https://openapi.dyness.com.cn/openapi/emsdevice"      # China v2
+API_BASE_V2 = "https://eu-openapi.dyness.com/openapi/ems-device"        # Europa v2
+# API_BASE_V2 = "https://apacopen-api.dyness.com/openapi/ems-device"    # Asia-Pacific v2
+# API_BASE_V2 = "https://na-openapi.dyness.com/openapi/ems-device"      # North America v2
+# API_BASE_V2 = "https://latam-openapi.dyness.com/openapi/ems-device"   # Latin America v2
+# API_BASE_V2 = "https://me-openapi.dyness.com/openapi/ems-device"      # Middle East v2
+# API_BASE_V2 = "https://af-openapi.dyness.com/openapi/ems-device"      # Africa v2
+# API_BASE_V2 = "https://sa-openapi.dyness.com/openapi/ems-device"      # South America v2
+# API_BASE_V2 = "https://global-openapi.dyness.com/openapi/ems-device"  # Global v2
+# API_BASE_V2 = "https://openapi.dyness.com.cn/openapi/ems-device"      # China v2
 
 # Optional: Wenn Auto-Discovery fehlschlägt
 DEVICE_SN = ""

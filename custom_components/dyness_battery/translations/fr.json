@@ -250,6 +250,18 @@
       "pv_power": {
         "name": "PV Power"
       },
+      "pv_voltage": {
+        "name": "Tension PV"
+      },
+      "pv_current": {
+        "name": "Courant PV"
+      },
+      "out_energy_today": {
+        "name": "Énergie de sortie PV aujourd'hui"
+      },
+      "out_energy_total": {
+        "name": "Énergie de sortie PV totale"
+      },
       "load_power": {
         "name": "Load Power"
       },

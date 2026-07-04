@@ -754,6 +754,16 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 data["chargeCurrentLimit"] = cl
                             if dl is not None and dl > 0:
                                 data["dischargeCurrentLimit"] = dl
+
+                        # PV-Daten — nur für Junior Box (nicht DL5.0C)
+                        if schema == SCHEMA_JUNIOR:
+                            data["pvVoltage"]      = rt.get("4600")
+                            data["pvCurrent"]      = rt.get("4700")
+                            data["pvPower"]        = rt.get("4800")
+                            data["pvEnergyTotal"]  = rt.get("7500")
+                            data["pvEnergyToday"]  = rt.get("7600")
+                            data["outEnergyTotal"] = rt.get("7700")
+                            data["outEnergyToday"] = rt.get("7800")
                     elif schema == SCHEMA_POWERBOX_PRO:
                         # PowerBox Pro / PowerHaus Schema — verifiziert via Log
                         # batteryCapacity aus station/info = Gesamtkapazität direkt

@@ -50,6 +50,11 @@ SENSORS = [
     ("balancingStatus",        "balancing_status",       None,                         None,                          None,                              "mdi:scale-balance",          None, _D),
     # Inverter / Hybrid Sensoren (aus getLastRunningDataBySn — nur wenn verfügbar)
     ("pvPower",            "pv_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-power",            None, None),
+    # Junior Box PV-Sensoren (Points 4600/4700/7500/7600/7700/7800 — nur SCHEMA_JUNIOR)
+    ("pvVoltage",          "pv_voltage",          UnitOfElectricPotential.VOLT,   SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    None),
+    ("pvCurrent",          "pv_current",          UnitOfElectricCurrent.AMPERE,   SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            1,    None),
+    ("outEnergyToday",     "out_energy_today",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-export-outline",    None, None),
+    ("outEnergyTotal",     "out_energy_total",    UnitOfEnergy.KILO_WATT_HOUR,    SensorDeviceClass.ENERGY,      SensorStateClass.TOTAL_INCREASING, "mdi:home-export-outline",    None, None),
     ("loadPower",          "load_power",           UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:home-lightning-bolt",    None, None),
     ("gridPower",          "grid_power",           UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:transmission-tower",     None, None),
     ("pv1Power",           "pv1_power",            UnitOfPower.WATT,               SensorDeviceClass.POWER,       SensorStateClass.MEASUREMENT,      "mdi:solar-panel",            None, None),
