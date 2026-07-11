@@ -731,6 +731,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     elif schema in (SCHEMA_JUNIOR, SCHEMA_DL5):
                         data["packVoltage"]            = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
+                        if rt.get("800") is not None:
+                            data["soc"] = rt.get("800")
                         data["soh"]                   = rt.get("1200")
                         data["temp"]                  = rt.get("1800")
                         data["cellVoltageMax"]         = rt.get("1300")
