@@ -62,6 +62,39 @@ def _select_bms_devices(device_list: list) -> list:
     return bms_devices if bms_devices else device_list
 
 
+# ── Options: Alarm-Delay ─────────────────────────────────────────────────────
+# Konfigurierbare Mindestdauer bevor ein Alarm als Notification gemeldet wird.
+# Verhindert Benachrichtigungen bei kurzzeitigen Transient-Ereignissen
+# (z.B. Pack-High-Voltage beim Balancing auf 100% SOC).
+ALARM_DELAY_OPTIONS = {
+    "0":   "Sofort (Standard)",
+    "15":  "15 Minuten",
+    "30":  "30 Minuten",
+    "60":  "60 Minuten",
+    "120": "2 Stunden",
+}
+
+
+class DynessOptionsFlow(config_entries.OptionsFlow):
+    """Options-Dialog: Alarm-Delay konfigurieren."""
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Gespeicherter Wert immer als String — HA serialisiert Form-Werte als str
+        current_delay = str(self.config_entry.options.get("alarm_delay_minutes", "0"))
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required(
+                    "alarm_delay_minutes",
+                    default=current_delay,
+                ): vol.In(ALARM_DELAY_OPTIONS),
+            }),
+        )
+
+
 STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Required("api_id"): str,
     vol.Required("api_secret"): str,
@@ -73,6 +106,15 @@ class DynessConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config Flow für Dyness Battery."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Options-Dialog für bestehende Einträge (Zahnrad-Button auf der Integrationskachel).
+        
+        Hinweis: config_entry wird NICHT an den Konstruktor übergeben — HA 2024.x setzt
+        self.config_entry automatisch. Übergabe als Argument würde einen 500-Fehler auslösen.
+        """
+        return DynessOptionsFlow()
 
     def __init__(self):
         self._api_id = None

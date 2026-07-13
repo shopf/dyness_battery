@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from email.utils import formatdate
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 
 import aiohttp
 import async_timeout
@@ -62,9 +62,10 @@ SCHEMA_POWERBOX_PRO = "powerbox_pro"
 SCHEMA_POWERBOX_G2  = "powerbox_g2"
 SCHEMA_POWERDEPOT   = "powerdepot"
 SCHEMA_JUNIOR       = "junior"
-SCHEMA_POWERBRICK   = "powerbrick"
-SCHEMA_CYGNI        = "cygni"
-SCHEMA_UNKNOWN      = "unknown"
+SCHEMA_POWERBRICK    = "powerbrick"
+SCHEMA_POWERBRICK_SC = "powerbrick_sc"
+SCHEMA_CYGNI         = "cygni"
+SCHEMA_UNKNOWN       = "unknown"
 
 # Explizite Model → Schema Mapping
 # Neue Modelle hier eintragen — kein Code-Logik-Anfassen nötig.
@@ -72,7 +73,7 @@ SCHEMA_UNKNOWN      = "unknown"
 _MODEL_SCHEMA_MAP: dict[str, str] = {
     # Tower Familie — exakte Namen aus API verifiziert
     "TOWER-T14":        SCHEMA_TOWER,
-    "TOWER-T17":        SCHEMA_TOWER,   # modelCode 26, verifiziert via Log (#31)
+    "TOWER-T17":        SCHEMA_TOWER,   # modelCode 26
     "TOWER-PRO-TP7":    SCHEMA_TOWER,   # "Tower Pro TP7"  → TOWER-PRO-TP7
     "TOWER-PRO-TP11":   SCHEMA_TOWER,   # "Tower Pro TP11" → TOWER-PRO-TP11
     "TOWER-PRO-TP15":   SCHEMA_TOWER,   # "Tower Pro TP15" → TOWER-PRO-TP15
@@ -84,15 +85,16 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "STACK100-10S":     SCHEMA_STACK100,
     # DL5 Familie
     "DL5.0C":           SCHEMA_DL5,
-    # PowerBox G2 (modelCode 42) — eigenes Schema mit 5-stelligen Points, verifiziert
+    # PowerBox G2 (modelCode 42)
     "POWERBOX-G2":      SCHEMA_POWERBOX_G2,
-    # PowerBox Pro / PowerHaus — eigenes Schema, verifiziert via Log
+    # PowerBox Pro / PowerHaus
     "POWERBOX-PRO":     SCHEMA_POWERBOX_PRO,
     "POWERHAUS":        SCHEMA_POWERBOX_PRO,
     # PowerDepot G2 (modelCode 144) — eigenes Schema
     "POWERDEPOT-G2":    SCHEMA_POWERDEPOT,
-    # PowerBrick (modelCode 43) — HV standalone, Point-Schema ähnlich PowerDepot G2
-    # Verifiziert via Issue #36 Log (deviceModelName = "PowerBrick", 14.336 kWh, 1 Modul)
+    # PowerBrick SC (modelCode 226)
+    "POWERBRICK-SC":    SCHEMA_POWERBRICK_SC,
+    # PowerBrick (modelCode 43)
     "POWERBRICK":       SCHEMA_POWERBRICK,
     # Junior Box
     "JUNIOR-BOX":       SCHEMA_JUNIOR,
@@ -206,6 +208,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data["api_base"],
         device_sn=entry.data.get("device_sn"),
         dongle_sn=entry.data.get("dongle_sn"),
+        config_entry=entry,
     )
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})
@@ -255,14 +258,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 class DynessDataCoordinator(DataUpdateCoordinator):
 
     def __init__(self, hass, api_id, api_secret, api_base,
-                 device_sn=None, dongle_sn=None):
+                 device_sn=None, dongle_sn=None, config_entry=None):
         super().__init__(hass, _LOGGER, name=DOMAIN,
                          update_interval=timedelta(minutes=5))
-        self.api_id     = api_id
-        self.api_secret = api_secret
-        self.api_base   = api_base
-        self.device_sn  = device_sn
-        self.dongle_sn  = dongle_sn
+        self.api_id       = api_id
+        self.api_secret   = api_secret
+        self.api_base     = api_base
+        self.device_sn    = device_sn
+        self.dongle_sn    = dongle_sn
+        self.config_entry = config_entry
 
         self.station_info  = {}
         self.device_info   = {}
@@ -281,6 +285,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         # Wird auf False zurückgesetzt wenn sich das Gerät-Schema ändert (z.B. Wechselrichter
         # nachgerüstet), was einen HA-Reload erfordert.
         self._running_data_all_null: bool = False
+        # BMS-Einträge in storage_list für batteryCapacity-Korrektur
+        self._storage_list_total: int = 0
+        self._storage_list_bms_count: int = 0
+        # Alarm-Delay — Zeitpunkt des ersten Auftretens pro Alarm-Label
+        self._alarm_first_seen: dict[str, datetime] = {}
 
     async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict,
                     max_retries: int = _MAX_RETRIES) -> dict:
@@ -428,6 +437,20 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     device_list[0] if device_list else {}
                                 )
                                 self.storage_info = match
+                                # BMS-Einträge zählen für batteryCapacity-Korrektur
+                                # Dyness zählt den BMS-Koordinator fälschlicherweise als Batterie
+                                # und gibt batteryCapacity × (n_batteries + 1) zurück
+                                self._storage_list_total = len(device_list)
+                                self._storage_list_bms_count = sum(
+                                    1 for d in device_list
+                                    if str(d.get("deviceSn", "")).endswith(_BMS_SUFFIXES)
+                                )
+                                if self._storage_list_bms_count > 0:
+                                    _LOGGER.debug(
+                                        "Dyness storage/list: %d Geräte total, %d BMS-Einträge "
+                                        "(batteryCapacity wird korrigiert)",
+                                        self._storage_list_total, self._storage_list_bms_count
+                                    )
                         except Exception as e:
                             _LOGGER.warning("Dyness storage/list nicht erreichbar: %s", e)
 
@@ -511,7 +534,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 _LOGGER.debug("Dyness Modul %s: %d Punkte", mid, len(m_pts))
                             else:
                                 code = m_result.get("code")
-                                _LOGGER.warning("Dyness Modul %s: Code %s", sn, code)
+                                # 429 bei Sub-Modul ist nicht kritisch (Rate-Limit bei
+                                # vielen gleichzeitigen Koordinatoren) → DEBUG statt WARNING
+                                _LOGGER.debug("Dyness Modul %s: Code %s", sn, code)
                                 # Bei 429 oder anderen Fehlern: alten Wert beibehalten statt
                                 # das Modul aus module_data zu entfernen (Issue #26 — Slave
                                 # Sensoren wurden Unavailable wenn nur ein Sub-Modul-Call
@@ -636,8 +661,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data[key] = v
 
                     # Schema-Erkennung via deviceModelName (primär) + Point-Fallback
+                    # storage_info als Fallback wenn device_info beim Start rate-limited war
                     schema = _detect_schema(
-                        self.device_info.get("deviceModelName", ""), rt
+                        self.device_info.get("deviceModelName", "")
+                        or self.storage_info.get("deviceModelName", ""),
+                        rt
                     )
                     data["_schema"] = schema
                     _LOGGER.debug("Dyness: Schema erkannt: %s", schema)
@@ -654,6 +682,21 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     # - DL5 Master/Slave: station_info × n_sub_modules
                     # - Alle anderen: station_info × n_modules
                     bc_single = _to_float(self.station_info.get("batteryCapacity"))
+
+                    # BMS-Koordinator in storage_list → Dyness zählt ihn als Batterie
+                    # Dyness liefert: batteryCapacity = (n_real_batteries + n_bms) × kWh_pro_Einheit
+                    # Korrektur: bc_single auf Per-Einheit-Wert normieren → × n_modules = korrekt
+                    # Betrifft nur User deren Dyness-Account den BMS als Gerät registriert hat
+                    if (bc_single is not None
+                            and self._storage_list_bms_count > 0
+                            and self._storage_list_total > self._storage_list_bms_count):
+                        bc_single = round(bc_single / self._storage_list_total, 4)
+                        _LOGGER.debug(
+                            "Dyness batteryCapacity: BMS-Korrektur (%d BMS / %d Geräte) "
+                            "→ bc_single=%s kWh/Einheit",
+                            self._storage_list_bms_count, self._storage_list_total, bc_single
+                        )
+
                     n_modules = max(len(self._module_sns), 1)
                     is_tower_schema = schema == SCHEMA_TOWER
                     if schema in (SCHEMA_STACK100, SCHEMA_TOWER):
@@ -1186,6 +1229,86 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data.get("usableKwh"), data.get("workStatus"),
                         )
 
+                    elif schema == SCHEMA_POWERBRICK_SC:
+                        # PowerBrick SC Schema (modelCode 226) — Issue #44
+                        # Komplett neues 5-stelliges Point-Schema gegenüber SCHEMA_POWERBRICK.
+                        # Verifiziert via Issue #44 Log (16.076 kWh, 16 Zellen).
+                        #
+                        # Verifizierte Points:
+                        # 10300–11800 = 16 Zellspannungen (Schritte 100)
+                        # 12500       = Temp Max (°C)
+                        # 12600       = Temp Min (°C)
+                        # 12700       = MOSFET Temp (°C)
+                        # 12800       = BMS Temp Max (°C)
+                        # 13400       = Strom (A) — negativ = Laden
+                        # 13500       = Pack-Spannung (V)
+                        # 13700       = Work Status Code (4 = Laden?)
+                        # 13900       = SOC (%)
+                        # 18600       = Max. Ladestrom (A)
+                        # 18700       = Ladespannungslimit (V)
+                        # 18800       = Entladespannungslimit (V)
+                        # 19200       = Max. Entladestrom (A)
+                        #
+                        # batteryCapacity: direkt aus station/info (Einzelgerät, kein Multiplikator)
+                        bc_sc = _to_float(self.station_info.get("batteryCapacity"))
+                        if bc_sc is not None:
+                            data["batteryCapacity"] = bc_sc
+
+                        data["packVoltage"]     = rt.get("13500")
+                        data["realTimeCurrent"] = rt.get("13400")
+                        data["soc"]             = rt.get("13900")
+                        data["tempMax"]         = rt.get("12500")
+                        data["tempMin"]         = rt.get("12600")
+                        data["tempMosfet"]      = rt.get("12700")
+                        data["tempBmsMax"]      = rt.get("12800")
+
+                        # Zellspannungen: Points 10300, 10400, ..., 11800 (16 Zellen)
+                        cells_sc = []
+                        for i in range(1, 17):
+                            v = _to_float(rt.get(str(10200 + i * 100)))
+                            if v is not None and v > 0:
+                                cells_sc.append(v)
+                        if cells_sc:
+                            data["cellVoltageMax"] = max(cells_sc)
+                            data["cellVoltageMin"] = min(cells_sc)
+
+                        # Strom- und Spannungslimits
+                        cv_sc = _to_float(rt.get("18700"))
+                        dv_sc = _to_float(rt.get("18800"))
+                        cl_sc = _to_float(rt.get("18600"))
+                        dl_sc = _to_float(rt.get("19200"))
+                        if cv_sc is not None and cv_sc > 0:
+                            data["chargeVoltageLimit"]    = cv_sc
+                        if dv_sc is not None and dv_sc > 0:
+                            data["dischargeVoltageLimit"] = dv_sc
+                        if cl_sc is not None and cl_sc > 0:
+                            data["chargeCurrentLimit"]    = cl_sc
+                        if dl_sc is not None and dl_sc > 0:
+                            data["dischargeCurrentLimit"] = dl_sc
+
+                        # workStatus aus Strom ableiten
+                        current_sc = _to_float(rt.get("13400"))
+                        if current_sc is not None:
+                            if current_sc > 1.0:
+                                data["workStatus"] = "Charging"
+                            elif current_sc < -1.0:
+                                data["workStatus"] = "Discharging"
+                            else:
+                                data["workStatus"] = "Standby"
+
+                        # SOC-basierte Kapazitätsberechnung
+                        soc_sc = _to_float(rt.get("13900"))
+                        if bc_sc is not None and soc_sc is not None:
+                            data["usableKwh"]    = round(bc_sc, 3)
+                            data["remainingKwh"] = round(bc_sc * soc_sc / 100, 3)
+
+                        _LOGGER.debug(
+                            "Dyness PowerBrick SC: packVoltage=%s V, SOC=%s%%, "
+                            "current=%s A, cells=%d, tempMax=%s°C",
+                            data.get("packVoltage"), soc_sc, current_sc,
+                            len(cells_sc), data.get("tempMax"),
+                        )
+
                     elif schema == SCHEMA_CYGNI:
                         # Cygni 10.0HS-M8 Schema (modelCode 192) — Hybrid-Wechselrichter
                         # Verifiziert via API-Log (Discussion #18)
@@ -1401,24 +1524,60 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         if str(rt.get(pid, "0")) == "1":
                             alarm_texts.append(label)
 
+                    # Alarm-Delay — Notification erst nach konfigurierbarer
+                    # Mindestdauer auslösen. Verhindert Benachrichtigungen bei kurzzeitigen
+                    # Transient-Ereignissen (z.B. Pack-High-Voltage beim Balancing auf 100% SOC).
+                    # Sensor alarmText zeigt immer den aktuellen Stand — unabhängig vom Delay.
+                    alarm_delay_min = 0
+                    if self.config_entry is not None:
+                        # options speichert den Wert als String (vol.In mit str-Keys)
+                        alarm_delay_min = int(
+                            self.config_entry.options.get("alarm_delay_minutes", 0)
+                        )
+                    alarm_delay = timedelta(minutes=alarm_delay_min)
+                    now_utc = datetime.now(timezone.utc)
+                    active_labels = set(alarm_texts)
+
+                    # Tracking: weggefallene Alarme entfernen, neue registrieren
+                    for label in list(self._alarm_first_seen):
+                        if label not in active_labels:
+                            del self._alarm_first_seen[label]
+                    for label in active_labels:
+                        if label not in self._alarm_first_seen:
+                            self._alarm_first_seen[label] = now_utc
+
+                    # Nur Alarme melden die Delay überschritten haben
+                    reportable = [
+                        label for label in alarm_texts
+                        if (now_utc - self._alarm_first_seen[label]) >= alarm_delay
+                    ]
+
                     if alarm_texts:
                         data["alarmText"] = ", ".join(alarm_texts)
-                        # Persistent Notification in HA
-                        self.hass.async_create_task(
-                            self.hass.services.async_call(
-                                "persistent_notification", "create", {
-                                    "title": "⚠️ Dyness Battery Alarm",
-                                    "message": (
-                                        f"Active alarms detected on {self.device_sn}:\n"
-                                        + "\n".join(f"• {t}" for t in alarm_texts)
-                                        + "\n\nPlease contact Dyness support if the issue persists."
-                                    ),
-                                    "notification_id": f"dyness_alarm_{self.device_sn}",
-                                }
+                        if reportable:
+                            self.hass.async_create_task(
+                                self.hass.services.async_call(
+                                    "persistent_notification", "create", {
+                                        "title": "⚠️ Dyness Battery Alarm",
+                                        "message": (
+                                            f"Active alarms detected on {self.device_sn}:\n"
+                                            + "\n".join(f"• {t}" for t in reportable)
+                                            + "\n\nPlease contact Dyness support if the issue persists."
+                                        ),
+                                        "notification_id": f"dyness_alarm_{self.device_sn}",
+                                    }
+                                )
                             )
-                        )
+                        else:
+                            _LOGGER.debug(
+                                "Dyness: %d Alarm(e) aktiv, Delay %d Min noch nicht erreicht "
+                                "(max. seit %s) — keine Notification",
+                                len(alarm_texts), alarm_delay_min,
+                                min(self._alarm_first_seen.values(), default=now_utc),
+                            )
                     else:
                         data["alarmText"] = "OK"
+                        self._alarm_first_seen.clear()
                         # Notification löschen wenn kein Alarm mehr
                         self.hass.async_create_task(
                             self.hass.services.async_call(
@@ -1470,7 +1629,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     #   repräsentieren nur einen Teilbereich der Kapazität und unterschätzen
                     #   systematisch (z.B. 3.5 kWh statt 10.24 kWh). batteryCapacity × SOC zuverlässiger.
                     # Alle anderen: Strategie 1 (Ah) wenn verfügbar, sonst SOC-Fallback.
-                    if schema not in (SCHEMA_STACK100, SCHEMA_POWERDEPOT, SCHEMA_POWERBOX_G2, SCHEMA_POWERBRICK):
+                    if schema not in (SCHEMA_STACK100, SCHEMA_POWERDEPOT, SCHEMA_POWERBOX_G2,
+                                      SCHEMA_POWERBRICK, SCHEMA_POWERBRICK_SC):
                         try:
                             mod_data = data.get("module_data", {})
                             total_remain_kwh = 0.0

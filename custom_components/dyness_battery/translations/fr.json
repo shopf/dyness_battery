@@ -415,5 +415,19 @@
       "discovery_failed": "Impossible de détecter l'appareil automatiquement. Veuillez utiliser la configuration manuelle.",
       "device_not_found": "Appareil sélectionné introuvable. Veuillez réessayer."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dyness Battery – Options",
+        "description": "Configurer le comportement de l'intégration.",
+        "data": {
+          "alarm_delay_minutes": "Délai de notification d'alarme"
+        },
+        "data_description": {
+          "alarm_delay_minutes": "Durée minimale pendant laquelle une alarme doit être active avant qu'une notification Home Assistant soit déclenchée. Évite les notifications pour des événements transitoires (ex. alarme d'équilibrage à 100% SOC)."
+        }
+      }
+    }
   }
 }

@@ -415,5 +415,19 @@
       "discovery_failed": "Could not discover device automatically. Please use manual setup.",
       "device_not_found": "Selected device not found. Please try again."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dyness Battery – Options",
+        "description": "Configure integration behaviour.",
+        "data": {
+          "alarm_delay_minutes": "Alarm notification delay"
+        },
+        "data_description": {
+          "alarm_delay_minutes": "Minimum duration an alarm must be active before a Home Assistant notification is triggered. Use this to suppress transient events (e.g. balancing alarms at 100% SOC)."
+        }
+      }
+    }
   }
 }

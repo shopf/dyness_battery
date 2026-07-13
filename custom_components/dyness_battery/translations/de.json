@@ -415,5 +415,19 @@
       "discovery_failed": "Gerät konnte nicht automatisch erkannt werden. Bitte manuelle Einrichtung verwenden.",
       "device_not_found": "Ausgewähltes Gerät nicht gefunden. Bitte erneut versuchen."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dyness Battery – Einstellungen",
+        "description": "Integrationsverhalten konfigurieren.",
+        "data": {
+          "alarm_delay_minutes": "Alarm-Benachrichtigungsverzögerung"
+        },
+        "data_description": {
+          "alarm_delay_minutes": "Mindestdauer, die ein Alarm aktiv sein muss, bevor eine Home Assistant-Benachrichtigung ausgelöst wird. Verhindert Meldungen bei kurzen Ereignissen (z.B. Balancing-Alarm bei 100% SOC)."
+        }
+      }
+    }
   }
 }
