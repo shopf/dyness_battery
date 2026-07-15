@@ -92,9 +92,11 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "POWERHAUS":        SCHEMA_POWERBOX_PRO,
     # PowerDepot G2 (modelCode 144) — eigenes Schema
     "POWERDEPOT-G2":    SCHEMA_POWERDEPOT,
-    # PowerBrick SC (modelCode 226)
-    "POWERBRICK-SC":    SCHEMA_POWERBRICK_SC,
     # PowerBrick (modelCode 43)
+    # PowerBrick SC (modelCode 226)
+    # PowerBrick Plus — identisches Point-Schema wie PowerBrick SC
+    "POWERBRICK-SC":    SCHEMA_POWERBRICK_SC,
+    "POWERBRICK-PLUS":  SCHEMA_POWERBRICK_SC,
     "POWERBRICK":       SCHEMA_POWERBRICK,
     # Junior Box
     "JUNIOR-BOX":       SCHEMA_JUNIOR,
@@ -684,17 +686,24 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     bc_single = _to_float(self.station_info.get("batteryCapacity"))
 
                     # BMS-Koordinator in storage_list → Dyness zählt ihn als Batterie
-                    # Dyness liefert: batteryCapacity = (n_real_batteries + n_bms) × kWh_pro_Einheit
-                    # Korrektur: bc_single auf Per-Einheit-Wert normieren → × n_modules = korrekt
-                    # Betrifft nur User deren Dyness-Account den BMS als Gerät registriert hat
+                    # Dyness liefert: batteryCapacity = (n_real + n_bms) × kWh_pro_Einheit
+                    # Korrekt: Gesamtwert direkt mit Faktor real/total setzen.
+                    # WICHTIG: bc_single wird NICHT verändert — nachfolgende × n_modules
+                    # Logik wird per Flag übersprungen damit kein doppelter Korrekturfaktor entsteht.
+                    _bc_from_bms_fix = False
                     if (bc_single is not None
                             and self._storage_list_bms_count > 0
                             and self._storage_list_total > self._storage_list_bms_count):
-                        bc_single = round(bc_single / self._storage_list_total, 4)
+                        _real = self._storage_list_total - self._storage_list_bms_count
+                        data["batteryCapacity"] = round(
+                            bc_single * _real / self._storage_list_total, 3
+                        )
+                        _bc_from_bms_fix = True
                         _LOGGER.debug(
                             "Dyness batteryCapacity: BMS-Korrektur (%d BMS / %d Geräte) "
-                            "→ bc_single=%s kWh/Einheit",
-                            self._storage_list_bms_count, self._storage_list_total, bc_single
+                            "→ %s kWh (war: %s kWh)",
+                            self._storage_list_bms_count, self._storage_list_total,
+                            data["batteryCapacity"], bc_single,
                         )
 
                     n_modules = max(len(self._module_sns), 1)
@@ -702,6 +711,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     if schema in (SCHEMA_STACK100, SCHEMA_TOWER):
                         # Wird unten von Point 1700 überschrieben — hier nur Initialwert
                         data["batteryCapacity"] = bc_single
+                    elif _bc_from_bms_fix:
+                        # Gesamtwert bereits korrekt gesetzt — × n_modules überspringen
+                        pass
                     elif bc_single is not None and n_modules > 1:
                         data["batteryCapacity"] = round(bc_single * n_modules, 3)
                         _LOGGER.debug(
@@ -863,7 +875,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["remainingKwh"] = round(bc * soh_factor * soc / 100, 3)
 
                     elif schema == SCHEMA_TOWER:
-                        # Tower Schema (Tower T14 + Tower Pro TP7/TP11/TP15)
+                        # Tower Schema (Tower T14/T17/T21 + Tower Pro TP7/TP11/TP15)
+                        data["soc"]                   = rt.get("1400")
                         data["soh"]                   = rt.get("1500")
                         data["tempMax"]               = rt.get("3000")
                         data["tempMin"]               = rt.get("3300")
@@ -1230,37 +1243,47 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
 
                     elif schema == SCHEMA_POWERBRICK_SC:
-                        # PowerBrick SC Schema (modelCode 226) — Issue #44
-                        # Komplett neues 5-stelliges Point-Schema gegenüber SCHEMA_POWERBRICK.
-                        # Verifiziert via Issue #44 Log (16.076 kWh, 16 Zellen).
+                        # PowerBrick SC / PowerBrick Plus
+                        # 5-stelliges Point-Schema (10xxx-19xxx).
                         #
-                        # Verifizierte Points:
-                        # 10300–11800 = 16 Zellspannungen (Schritte 100)
+                        # Points:
+                        # 10300-11800 = 16 Zellspannungen (Schritte 100)
+                        # 12400       = BMS Temp (°C)
                         # 12500       = Temp Max (°C)
                         # 12600       = Temp Min (°C)
                         # 12700       = MOSFET Temp (°C)
                         # 12800       = BMS Temp Max (°C)
-                        # 13400       = Strom (A) — negativ = Laden
+                        # 13400       = Strom (A) — negativ = Entladen
                         # 13500       = Pack-Spannung (V)
-                        # 13700       = Work Status Code (4 = Laden?)
-                        # 13900       = SOC (%)
+                        # 13900       = Raw-SOC (%) → normalisiert auf 18400 = Dyness-App-Wert
+                        # 14100       = Zyklenanzahl
+                        # 18400       = Max-SOC-Limit (%) — z.B. 65% → normiert SOC-Anzeige
                         # 18600       = Max. Ladestrom (A)
                         # 18700       = Ladespannungslimit (V)
                         # 18800       = Entladespannungslimit (V)
                         # 19200       = Max. Entladestrom (A)
                         #
-                        # batteryCapacity: direkt aus station/info (Einzelgerät, kein Multiplikator)
+
                         bc_sc = _to_float(self.station_info.get("batteryCapacity"))
                         if bc_sc is not None:
                             data["batteryCapacity"] = bc_sc
 
                         data["packVoltage"]     = rt.get("13500")
                         data["realTimeCurrent"] = rt.get("13400")
-                        data["soc"]             = rt.get("13900")
+                        data["tempBms"]         = rt.get("12400")
                         data["tempMax"]         = rt.get("12500")
                         data["tempMin"]         = rt.get("12600")
                         data["tempMosfet"]      = rt.get("12700")
                         data["tempBmsMax"]      = rt.get("12800")
+                        data["cycleCount"]      = rt.get("14100")
+
+                        # SOC normalisiert auf Max-SOC-Limit (wie Dyness App)
+                        raw_soc_sc = _to_float(rt.get("13900"))
+                        max_soc_sc = _to_float(rt.get("18400"))
+                        if raw_soc_sc is not None and max_soc_sc is not None and max_soc_sc > 0:
+                            data["soc"] = round(min(raw_soc_sc / max_soc_sc * 100, 100), 1)
+                        elif raw_soc_sc is not None:
+                            data["soc"] = raw_soc_sc
 
                         # Zellspannungen: Points 10300, 10400, ..., 11800 (16 Zellen)
                         cells_sc = []
@@ -1296,17 +1319,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             else:
                                 data["workStatus"] = "Standby"
 
-                        # SOC-basierte Kapazitätsberechnung
-                        soc_sc = _to_float(rt.get("13900"))
-                        if bc_sc is not None and soc_sc is not None:
+                        # Kapazitätsberechnung auf Basis normalisiertem SOC
+                        soc_display = data.get("soc")
+                        if bc_sc is not None and soc_display is not None:
                             data["usableKwh"]    = round(bc_sc, 3)
-                            data["remainingKwh"] = round(bc_sc * soc_sc / 100, 3)
+                            data["remainingKwh"] = round(bc_sc * soc_display / 100, 3)
 
                         _LOGGER.debug(
-                            "Dyness PowerBrick SC: packVoltage=%s V, SOC=%s%%, "
-                            "current=%s A, cells=%d, tempMax=%s°C",
-                            data.get("packVoltage"), soc_sc, current_sc,
-                            len(cells_sc), data.get("tempMax"),
+                            "Dyness PowerBrick SC/Plus: packVoltage=%s V, SOC=%s%% "
+                            "(raw=%s, max=%s), current=%s A, cells=%d, cycleCount=%s",
+                            data.get("packVoltage"), data.get("soc"),
+                            raw_soc_sc, max_soc_sc, current_sc,
+                            len(cells_sc), data.get("cycleCount"),
                         )
 
                     elif schema == SCHEMA_CYGNI:
