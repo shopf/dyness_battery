@@ -128,11 +128,20 @@ def _detect_schema(device_model_name: str, rt: dict) -> str:
             return schema
 
     # Fallback: Point-Heuristik (letzter Ausweg für komplett unbekannte Modelle)
-    _LOGGER.warning(
-        "Dyness: Unbekanntes Modell '%s' — Schema-Erkennung via Points (Fallback). "
-        "Bitte ein Issue mit Log-Datei erstellen.",
-        model,
-    )
+    if not model:
+        # Leerer Modellname = transientes Startup-Problem (Rate-Limit beim ersten API-Call)
+        # → kein echter Fehler, wird beim nächsten Zyklus automatisch korrigiert
+        _LOGGER.debug(
+            "Dyness: Modellname noch nicht verfügbar (Startup/Rate-Limit) — "
+            "Schema-Erkennung via Points, wird beim nächsten Zyklus wiederholt."
+        )
+    else:
+        # Echter unbekannter Modellname → WARNING, User soll Issue erstellen
+        _LOGGER.warning(
+            "Dyness: Unbekanntes Modell '%s' — Schema-Erkennung via Points (Fallback). "
+            "Bitte ein Issue mit Log-Datei erstellen.",
+            model,
+        )
     if "1400" in rt and ("2400" in rt or "2700" in rt):
         return SCHEMA_TOWER
     if "800" in rt:
@@ -1153,10 +1162,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # 4000  = Battery Status (Lade-/Entladestatus)
                         # 4100  = Total Alarm Flag
 
-                        # batteryCapacity direkt aus station/info (Einzelmodul, kein Multiplikator)
-                        bc_pb = _to_float(self.station_info.get("batteryCapacity"))
+                        # batteryCapacity: bc_single × Modulanzahl (Point 400)
+                        bc_pb       = _to_float(self.station_info.get("batteryCapacity"))
+                        n_mod_pb    = _to_float(rt.get("400"))
                         if bc_pb is not None:
-                            data["batteryCapacity"] = bc_pb
+                            if n_mod_pb is not None and n_mod_pb > 1:
+                                data["batteryCapacity"] = round(bc_pb * int(n_mod_pb), 3)
+                                _LOGGER.debug(
+                                    "Dyness PowerBrick: batteryCapacity %s × %d Module = %s kWh",
+                                    bc_pb, int(n_mod_pb), data["batteryCapacity"]
+                                )
+                            else:
+                                data["batteryCapacity"] = bc_pb
 
                         data["packVoltage"]          = rt.get("600")
                         data["realTimeCurrent"]       = rt.get("700")
@@ -1275,15 +1292,46 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["tempMin"]         = rt.get("12600")
                         data["tempMosfet"]      = rt.get("12700")
                         data["tempBmsMax"]      = rt.get("12800")
-                        data["cycleCount"]      = rt.get("14100")
+                        # 13900 = Zyklenanzahl
+                        # 14100 = Bedeutung ungeklärt — kein Sensor
+                        data["cycleCount"]      = rt.get("13900")
 
-                        # SOC normalisiert auf Max-SOC-Limit (wie Dyness App)
-                        raw_soc_sc = _to_float(rt.get("13900"))
-                        max_soc_sc = _to_float(rt.get("18400"))
-                        if raw_soc_sc is not None and max_soc_sc is not None and max_soc_sc > 0:
-                            data["soc"] = round(min(raw_soc_sc / max_soc_sc * 100, 100), 1)
-                        elif raw_soc_sc is not None:
-                            data["soc"] = raw_soc_sc
+                        # SOC aus /v2/GetRealTimeDataBySN
+                        # v1 Points enthalten keinen SOC für SC/Plus.
+                        # Interne SN (Point 10001) wird als deviceSn für v2 verwendet.
+                        sn_v2 = str(rt.get("10001", "") or "").strip()
+                        if sn_v2:
+                            try:
+                                v2_result = await self._call(
+                                    session, "/v2/GetRealTimeDataBySN", {"deviceSn": sn_v2}
+                                )
+                                if _is_success(v2_result):
+                                    batt_info = (
+                                        (v2_result.get("data") or {})
+                                        .get("batteryInfo") or {}
+                                    )
+                                    soc_v2 = _to_float(batt_info.get("soc"))
+                                    if soc_v2 is not None and 0 <= soc_v2 <= 100:
+                                        data["soc"] = soc_v2
+                                        _LOGGER.debug(
+                                            "Dyness PowerBrick SC/Plus: SOC=%s%% "
+                                            "(v2 API, sn=%s)", soc_v2, sn_v2,
+                                        )
+                                    else:
+                                        _LOGGER.debug(
+                                            "Dyness PowerBrick SC/Plus: v2 SOC nicht "
+                                            "verwertbar (batteryInfo=%s)", batt_info
+                                        )
+                                else:
+                                    _LOGGER.debug(
+                                        "Dyness PowerBrick SC/Plus: v2 Code %s",
+                                        v2_result.get("code"),
+                                    )
+                            except Exception as _e:
+                                _LOGGER.debug(
+                                    "Dyness PowerBrick SC/Plus: v2-Abruf fehlgeschlagen: %s",
+                                    _e
+                                )
 
                         # Zellspannungen: Points 10300, 10400, ..., 11800 (16 Zellen)
                         cells_sc = []
