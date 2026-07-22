@@ -221,6 +221,11 @@ NOT_SUPPORTED_HINTS = [
     "not configured", "not support", "unsupported", "device type",
     "no such", "not found", "does not exist",
 ]
+# Muster, die auf "Gerät existiert/ist für v2 registriert, ist aber gerade
+# nicht erreichbar" hindeuten -- WICHTIG: das ist etwas anderes als "nicht
+# konfiguriert"! Ein offline gemeldetes Gerät könnte im Prinzip steuerbar
+# sein, sobald es wieder online ist -- wir wissen es nur gerade nicht.
+OFFLINE_HINTS = ["offline", "device is offline", "not online", "disconnected"]
 
 # Die tatsächlichen Pflichtfeld-Namen aus den PDFs, je Endpunkt (nur die
 # Felder, die in MINDESTENS einem der Dokumente als "Yes"/Pflicht markiert
@@ -251,6 +256,8 @@ def classify(path: str, result: dict) -> str:
 
     if http_status == 404 or code == "404":
         return "NICHT_VERFUEGBAR"
+    if any(h in info for h in OFFLINE_HINTS):
+        return "GERAET_OFFLINE"
     if any(h in info for h in NOT_SUPPORTED_HINTS):
         return "NICHT_VERFUEGBAR"
 
@@ -276,6 +283,7 @@ LABELS = {
     "PFLICHTFELD_FEHLT": "🟡 Endpunkt vorhanden (Validierungsfehler, Feld unklar)",
     "OK_GENERISCH":     "⚠️  200 OK, aber OHNE Feldbezug — evtl. nur generisches No-Op",
     "NICHT_VERFUEGBAR": "❌ nicht verfügbar für dieses Gerät",
+    "GERAET_OFFLINE":   "📡 Gerät offline (v2 kennt es, kann es aber gerade nicht erreichen)",
     "UNKLAR":           "❔ unklar — Rohantwort prüfen",
 }
 
@@ -308,6 +316,8 @@ def print_device_report(sn: str, model_name: str, results: dict):
     any_validated = False
     any_maybe = False
     any_generic = False
+    any_offline = False
+    all_not_available = True
     for ep in SET_ENDPOINTS:
         klass, res = results[ep["path"]]
         label = LABELS[klass]
@@ -322,6 +332,10 @@ def print_device_report(sn: str, model_name: str, results: dict):
             any_maybe = True
         elif klass == "OK_GENERISCH":
             any_generic = True
+        elif klass == "GERAET_OFFLINE":
+            any_offline = True
+        if klass != "NICHT_VERFUEGBAR":
+            all_not_available = False
     print(SEP2)
     if any_validated:
         verdict = ("STEUERBAR — Server hat mindestens einen echten, im PDF "
@@ -335,6 +349,15 @@ def print_device_report(sn: str, model_name: str, results: dict):
                    "ein No-Op-Erfolg sein, der nichts über echte Steuerbarkeit aussagt "
                    "(vgl. GetStatusInfBySN/GetTotalEnergyDataBySN-Verhalten). Nicht als "
                    "'steuerbar' werten, ohne dies mit echten Parametern gegenzuprüfen.")
+    elif any_offline:
+        verdict = ("UNKLAR (GERÄT OFFLINE) — v2 kennt dieses Gerät grundsätzlich, kann es "
+                   "aber gerade nicht erreichen. Keine Aussage über Steuerbarkeit möglich, "
+                   "solange das Gerät nicht online ist. Bitte später erneut testen.")
+    elif all_not_available:
+        verdict = ("KOMPLETT 'NOT CONFIGURED' — das betrifft hier ALLE Endpunkte, nicht nur "
+                   "die Steuerung. Das deutet eher auf 'v2 ist für dieses Gerät/Konto generell "
+                   "nicht freigeschaltet' hin, nicht auf 'Steuerung fehlt'. Siehe Gesamt-Diagnose "
+                   "unten.")
     else:
         verdict = "KEINE STEUERUNGSMÖGLICHKEIT GEFUNDEN — nur Monitoring über v2 möglich."
     print(f"  ERGEBNIS: {verdict}")
@@ -362,6 +385,44 @@ def to_v2_sn(v1_sn: str) -> str:
     return base if base != v1_sn else v1_sn
 
 
+def base_sn(sn: str) -> str:
+    """Normalisiert eine SN auf ihren 'Kern' (ohne bekannte Suffixe), um
+    verschiedene Schreibweisen desselben physischen Geräts zu erkennen."""
+    return re.sub(r'-(BMS|BDU|INV|EMS)$', '', sn)
+
+
+def gather_sn_candidates(v1_sn: str, device_list_entries: list) -> list:
+    """Baut eine geordnete, deduplizierte Liste möglicher v2-SN-Schreibweisen
+    für ein physisches Gerät: Original-SN, Suffix-befreite Variante, sowie
+    alle Treffer aus /v2/GetDeviceList mit demselben SN-Kern. Manche
+    Accounts/Geräte akzeptieren nur EINE bestimmte Schreibweise -- ein
+    einzelner Fallback-Versuch reicht dafür nicht immer aus."""
+    candidates = [v1_sn, to_v2_sn(v1_sn)]
+    core = base_sn(v1_sn)
+    for entry in device_list_entries:
+        cand_sn = entry.get("deviceSn", "")
+        if cand_sn and base_sn(cand_sn) == core and cand_sn not in candidates:
+            candidates.append(cand_sn)
+    # Reihenfolge beibehalten, Duplikate entfernen
+    seen = set()
+    out = []
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def fetch_v2_device_list() -> list:
+    """Einmaliger GetDeviceList-Aufruf, um alle bekannten SN-Schreibweisen
+    (mit/ohne Suffix) und deren communicationStatus einzusammeln."""
+    res = api_v2("/v2/GetDeviceList", {})
+    data = res.get("data")
+    if isinstance(data, list):
+        return data
+    return []
+
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -375,20 +436,41 @@ def main():
     if not devices:
         return
 
+    # Einmalig GetDeviceList holen -- liefert oft mehrere SN-Schreibweisen
+    # (mit/ohne Suffix) pro physischem Gerät.
+    device_list_entries = fetch_v2_device_list()
+    if device_list_entries:
+        print("  v2 GetDeviceList meldet folgende SN-Schreibweisen:")
+        for e in device_list_entries:
+            print(f"    {e.get('deviceSn','?'):<28} Modell: {e.get('deviceModel','?'):<20} "
+                  f"comm={e.get('communicationStatus','?')} work={e.get('workStatus','?')}")
+        print()
+
     summary = []
+    all_checks_ever_not_available = True   # für Gesamt-Diagnose unten
     for dev in devices:
         v1_sn = dev.get("deviceSn", "")
         model = dev.get("deviceModelName", "?")
-        v2_sn_candidate = to_v2_sn(v1_sn)
+        candidates = gather_sn_candidates(v1_sn, device_list_entries)
 
-        # Reachability-Check zuerst (wie in dyness_test.py) — probiert
-        # ggf. beide SN-Varianten.
-        check = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": v2_sn_candidate})
-        v2_sn = v2_sn_candidate
-        if classify("/v2/GetDeviceInfBySN", check) == "NICHT_VERFUEGBAR" and v2_sn_candidate != v1_sn:
-            check2 = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": v1_sn})
-            if classify("/v2/GetDeviceInfBySN", check2) != "NICHT_VERFUEGBAR":
-                v2_sn = v1_sn
+        # Erreichbarkeit über ALLE Kandidaten prüfen (nicht nur einen Fallback)
+        v2_sn = candidates[0]
+        chosen = False
+        checked = []
+        for cand in candidates:
+            check = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": cand})
+            klass = classify("/v2/GetDeviceInfBySN", check)
+            checked.append((cand, klass, check.get("info", "")))
+            if klass not in ("NICHT_VERFUEGBAR",) and not chosen:
+                v2_sn = cand
+                chosen = True
+
+        if len(candidates) > 1:
+            print(f"  SN-Kandidaten für {v1_sn}:")
+            for cand, klass, info in checked:
+                marker = " <-- gewählt" if cand == v2_sn else ""
+                print(f"    {cand:<28} {LABELS.get(klass, klass):<55} ({info!r}){marker}")
+            print()
 
         results = probe_device(v2_sn)
         print_device_report(v2_sn, model, results)
@@ -396,23 +478,46 @@ def main():
         validated = [p for p, (k, _) in results.items() if k == "VALIDIERT"]
         maybe_paths = [p for p, (k, _) in results.items() if k == "PFLICHTFELD_FEHLT"]
         generic = [p for p, (k, _) in results.items() if k == "OK_GENERISCH"]
-        summary.append((v2_sn, model, validated, maybe_paths, generic))
+        offline = [p for p, (k, _) in results.items() if k == "GERAET_OFFLINE"]
+        not_avail = [p for p, (k, _) in results.items() if k == "NICHT_VERFUEGBAR"]
+        summary.append((v2_sn, model, validated, maybe_paths, generic, offline, not_avail))
+
+        if not chosen or len(not_avail) < len(SET_ENDPOINTS):
+            all_checks_ever_not_available = False
 
     # ── Gesamt-Zusammenfassung ─────────────────────────────────────────
     print(SEP)
     print("  GESAMT-ZUSAMMENFASSUNG")
     print(SEP)
-    for sn, model, validated, maybe_paths, generic in summary:
+    for sn, model, validated, maybe_paths, generic, offline, not_avail in summary:
         if validated:
             status = f"STEUERBAR ({', '.join(validated)})"
         elif maybe_paths:
             status = f"VERMUTLICH STEUERBAR ({', '.join(maybe_paths)} — echte Werte nötig)"
         elif generic:
             status = f"UNSICHER, nur generisches 200-OK ({', '.join(generic)})"
+        elif offline and len(offline) == len(SET_ENDPOINTS):
+            status = "GERÄT OFFLINE (v2 kennt es, aktuell nicht erreichbar)"
+        elif len(not_avail) == len(SET_ENDPOINTS):
+            status = "ALLE Endpunkte 'not configured' (siehe Diagnose unten)"
         else:
             status = "KEINE STEUERUNGSMÖGLICHKEIT (nur Monitoring)"
         print(f"  {sn:<28} [{model:<14}] -> {status}")
     print(SEP)
+
+    if all_checks_ever_not_available:
+        print()
+        print("⚠️  DIAGNOSE: Bei JEDEM Gerät waren ALLE v2-Endpunkte (Lesen UND")
+        print("   Schreiben) 'not configured'/nicht erreichbar. Das ist vermutlich")
+        print("   kein reines Steuerungs-Problem, sondern deutet darauf hin, dass")
+        print("   v2 für dieses Konto/diese Geräte(-region) noch gar nicht")
+        print("   freigeschaltet ist -- unabhängig von Get vs. Set. Mögliche Ursachen:")
+        print("   - Gerät ist (laut v1 bindSn-Antwort) auf ein anderes Konto")
+        print("     gebunden und muss ggf. erst auf das API-Konto umgehängt werden")
+        print("   - v2 ist für diese Region/diesen Account noch nicht aktiviert")
+        print("   -> Beim Dyness-Support gezielt nach v2-Freischaltung fragen,")
+        print("      nicht nur nach der Steuerungsfrage.")
+
     print()
     print("Bitte diesen Report als Kommentar/Issue teilen:")
     print("https://github.com/shopf/dyness_battery")

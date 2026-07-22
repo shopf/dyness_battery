@@ -1,7 +1,17 @@
 """
-Dyness API Tester v4.1
+Dyness API Tester v4.2
 Testet v1 (inkl. neu entdeckter Endpunkte aus offizieller Swagger-Doku)
 UND v2 (neue API) für alle Dyness Geräteserien.
+
+Neu in v4.2 (v2-only Geräte, z.B. DYNE 8.0L-1P-A / Dyness LV):
+  - Auto-Discovery Fallback: wenn v1 /v1/device/storage/list 0 Geräte
+    liefert, wird automatisch /v2/GetDeviceList als Discovery-Quelle
+    genutzt (v2-only Geräte erscheinen dort, aber NICHT in v1 storage/list)
+  - SN-Kandidaten: GetDeviceList liefert ggf. mehrere SN-Schreibweisen
+    pro physischem Gerät (z.B. mit/ohne -BMS-Suffix) — alle werden
+    systematisch für GetDeviceInfBySN durchprobiert statt nur 2 Varianten
+  - print_summary erkennt "v2-only"-Muster und gibt klare Diagnose aus
+  - Neue Flag-Variable v2_only_device fuer Downstream-Logik
 
 Neu in v4.1 (aus Swagger-Dokumentation):
   - /v1/device/getBindDeviceSnListByCurrentUserId  (GET, einfacher Discovery-Call)
@@ -613,7 +623,14 @@ def analyze_v2_device_list(result):
 def analyze_v2_status(result):
     ok = _v2_status(result, "GetStatusInfBySN")
     if not ok: return False
-    data = result.get("data") or {}
+    data = result.get("data")
+    # data=null bedeutet: Endpunkt antwortet, aber liefert fuer dieses Geraet
+    # keine Statusdaten (bekanntes No-Op-200-Muster bei Junior Box).
+    # Nicht als "echte Daten verfügbar" werten.
+    if not data:
+        print(f"  ⚠️  verfügbar, aber data=null — kein Statusdatensatz fuer dieses Geraet")
+        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht fuer Cygni/HT-A gedacht)")
+        return "empty"
     FIELDS = {
         "safeCountry": "Sicherheitsland/-norm Code",
         "runModel":    "Betriebsmodus",
@@ -635,7 +652,11 @@ def analyze_v2_status(result):
 def analyze_v2_total_energy(result):
     ok = _v2_status(result, "GetTotalEnergyDataBySN")
     if not ok: return False
-    data = result.get("data") or {}
+    data = result.get("data")
+    if not data:
+        print(f"  ⚠️  verfügbar, aber data=null — keine Energiezaehler fuer dieses Geraet")
+        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht fuer Cygni/HT-A gedacht)")
+        return "empty"
     FIELDS = {
         # Cygni / AquaVolt / HT-A (flat structure)
         "dailyPvGeneration":    "PV heute (kWh)",
@@ -688,8 +709,13 @@ def print_summary(results, device_model):
     any_ok = False
     for name, ok, desc in rows:
         if ok is None: continue  # nicht getestet
-        status = "✅ verfügbar " if ok else "❌ nicht verf."
-        if ok: any_ok = True
+        if ok == "empty":
+            status = "⚠️  200/null  "
+        elif ok:
+            status = "✅ verfügbar "
+            any_ok = True
+        else:
+            status = "❌ nicht verf."
         print(f"  {name:<28} {status}  ({desc})")
 
     print()
@@ -697,6 +723,17 @@ def print_summary(results, device_model):
         rt_ok = results.get("rt", False)
         par_ok = results.get("parallel", False)
         en_ok = results.get("energy", False)
+        v2_only = results.get("_v2_only_device", False)
+
+        if v2_only:
+            print("  ⚠️  V2-ONLY GERÄT ERKANNT:")
+            print("     v1 /v1/device/storage/list lieferte 0 Geräte — Gerät ist NUR über v2 sichtbar.")
+            print("     Das ist ein bekanntes Muster bei neueren Dyness-Geräten (z.B. DYNE 8.0L-1P-A).")
+            print("     Die aktuelle HA-Integration (v1-basiert) kann dieses Gerät NICHT automatisch")
+            print("     erkennen — v2-native Discovery und Polling ist erforderlich.")
+            print("     → Bitte als Issue mit diesem Log melden: https://github.com/shopf/dyness_battery")
+            print()
+
         print("  💡 Polling-Einschätzung:")
         if rt_ok and par_ok:
             print("     v2 kann v1 Master + Sub-Modul-Calls ersetzen → ~60% weniger Calls/Zyklus")
@@ -717,7 +754,7 @@ def print_summary(results, device_model):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 print(SEP)
-print("Dyness API Tester v4.1 — v1 (erweitert) + v2 Kompatibilitätstest (alle Serien)")
+print("Dyness API Tester v4.2 — v1 (erweitert) + v2 Kompatibilitätstest (alle Serien)")
 print(SEP)
 
 device_sn = DEVICE_SN.strip()
@@ -725,8 +762,11 @@ dongle_sn = DONGLE_SN.strip()
 device_model = "Unbekannt"
 
 # ── Auto-Discovery ────────────────────────────────────────────────────────────
+# Flag: True wenn Gerät nur ueber v2 sichtbar ist (v1 storage/list liefert 0)
+v2_only_device = False
+
 if not device_sn:
-    print("► Suche Geräte (v1)...")
+    print("► Suche Geräte (v1 storage/list)...")
     sl = api_v1("/v1/device/storage/list", {})
     print_result("Storage Geräteliste", "/v1/device/storage/list", {}, sl, "v1")
     if is_ok(sl):
@@ -736,13 +776,34 @@ if not device_sn:
             device_sn    = bms.get("deviceSn", "")
             dongle_sn    = bms.get("collectorSn", "") or ""
             device_model = bms.get("deviceModelName", "Unbekannt")
-            print(f"✅ Gerät: {device_sn}  Modell: {device_model}")
+            print(f"✅ Gerät (v1): {device_sn}  Modell: {device_model}")
             if len(devs) > 1:
                 print(f"   Weitere Geräte auf diesem Account:")
                 for d in devs:
                     print(f"   - {d.get('deviceSn')} ({d.get('deviceModelName','?')})")
         else:
-            print("❌ Keine Geräte — bitte DEVICE_SN eintragen."); sys.exit(1)
+            # v1 liefert 0 Geräte → Fallback auf v2 GetDeviceList
+            # Bekanntes Muster bei v2-only Geräten (DYNE 8.0L-1P-A / Dyness LV etc.)
+            print("⚠️  v1 storage/list: 0 Geräte — versuche v2 GetDeviceList als Fallback...")
+            dl = api_v2("/v2/GetDeviceList", {})
+            print_result("v2 GetDeviceList (Discovery-Fallback)", "/v2/GetDeviceList", {}, dl, "v2")
+            v2_devs = dl.get("data") if isinstance(dl.get("data"), list) else []
+            if v2_devs:
+                # Bevorzuge -BMS SN als Einstiegspunkt (wie v1), sonst erste SN
+                bms = next((d for d in v2_devs if str(d.get("deviceSn","")).endswith("-BMS")), v2_devs[0])
+                device_sn    = bms.get("deviceSn", "")
+                device_model = bms.get("deviceModel", "Unbekannt")
+                v2_only_device = True
+                print(f"✅ Gerät (v2-only): {device_sn}  Modell: {device_model}")
+                print(f"   ⚠️  Dieses Gerät ist NUR ueber v2 sichtbar — v1-Endpunkte werden")
+                print(f"       keine Nutzdaten liefern. v2-Abschnitt ist der relevante Teil.")
+                print(f"   Alle {len(v2_devs)} SN-Schreibweise(n) aus GetDeviceList:")
+                for d in v2_devs:
+                    print(f"   - {d.get('deviceSn')}  Modell: {d.get('deviceModel','?')}"
+                          f"  comm={d.get('communicationStatus','?')}")
+            else:
+                print("❌ Weder v1 noch v2 lieferten Geräte — bitte DEVICE_SN eintragen.")
+                sys.exit(1)
     else:
         print(f"❌ API Fehler: {sl.get('info')} — bitte DEVICE_SN eintragen."); sys.exit(1)
 else:
@@ -957,37 +1018,81 @@ print("  Cygni HA/HS, HT-A/LS, AquaVolt/SolarCube")
 print()
 
 # ── v2 SN-Varianten ermitteln ─────────────────────────────────────────────────
-# v1 verwendet z.B. "R07E87466813079E-BMS", v2 erwartet ggf. nur "R07E87466813079E"
-# Wir testen beide Varianten und merken uns die funktionierende.
-v2_sn_candidates = [device_sn]
-# Füge SN ohne Suffix hinzu wenn Suffix vorhanden (z.B. -BMS, -BDU, -INV)
-sn_base = re.sub(r'-(BMS|BDU|INV|EMS)$', '', device_sn)
-if sn_base != device_sn:
-    v2_sn_candidates.insert(0, sn_base)  # ohne Suffix zuerst testen
-# Dongle-SN als weitere Variante
-if dongle_sn and dongle_sn not in v2_sn_candidates:
-    v2_sn_candidates.append(dongle_sn)
+# v1 verwendet z.B. "R07E01234567890F-BMS", v2 erwartet ggf. nur "R07E01234567890F".
+# Zusaetzlich liefert GetDeviceList manchmal 4 Eintraege pro Geraet (mit/ohne Suffix
+# in beiden Schreibweisen) — alle systematisch durchprobieren (Issue: DYNE 8.0L-1P-A).
 
-print(f"  SN-Varianten für v2-Test: {v2_sn_candidates}")
+def _sn_base(sn):
+    return re.sub(r'-(BMS|BDU|INV|EMS)$', '', sn)
+
+v2_sn_candidates = []
+seen_cands = set()
+
+def _add_cand(sn):
+    if sn and sn not in seen_cands:
+        seen_cands.add(sn)
+        v2_sn_candidates.append(sn)
+
+# Ohne Suffix zuerst (bevorzugte v2-Form laut Doku)
+_add_cand(_sn_base(device_sn))
+_add_cand(device_sn)
+# Dongle-SN als weitere Variante
+if dongle_sn:
+    _add_cand(_sn_base(dongle_sn))
+    _add_cand(dongle_sn)
+# Alle SN-Schreibweisen aus GetDeviceList einbeziehen (inkl. Slave-SNs)
+# GetDeviceList wurde bereits im Discovery-Fallback aufgerufen; hier nochmal
+# fuer den Normalfall (v1-Geraete) und um alle Schreibweisen zu erfassen.
+_dl_check = api_v2("/v2/GetDeviceList", {})
+_dl_entries = _dl_check.get("data") if isinstance(_dl_check.get("data"), list) else []
+_base = _sn_base(device_sn)
+for _e in _dl_entries:
+    cand_sn = _e.get("deviceSn", "")
+    # Nur SNs desselben physischen Geraets (gleicher Kern ohne Suffix)
+    if cand_sn and _sn_base(cand_sn) == _base:
+        _add_cand(_sn_base(cand_sn))
+        _add_cand(cand_sn)
+
+print(f"  SN-Varianten fuer v2-Test ({len(v2_sn_candidates)} Kandidaten): {v2_sn_candidates}")
 print()
 
-# Teste GetDeviceInfBySN mit allen Varianten um die richtige SN zu finden
+# Teste GetDeviceInfBySN mit allen Kandidaten um die funktionierende SN zu finden
 v2_sn = device_sn  # Fallback
+v2_sn_found = False
 for candidate in v2_sn_candidates:
     probe = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": candidate})
+    probe_info = probe.get("info", "")
     if is_ok(probe):
         v2_sn = candidate
+        v2_sn_found = True
         print(f"  ✅ v2 SN-Format gefunden: '{v2_sn}'")
         break
-else:
-    print(f"  ⚠️  Alle SN-Varianten gaben Fehler — v2 möglicherweise nicht aktiviert.")
-    print(f"     Verwende '{v2_sn}' für alle weiteren Tests.")
+    else:
+        print(f"  — {candidate:<30} -> code={probe.get('code')}  info={probe_info!r}")
+
+if not v2_sn_found:
+    # Sonderfall: "Device is not configured" bei ALLEN Kandidaten trotz
+    # communicationStatus=1 in GetDeviceList → v2-Endpunkt kennt das Geraet,
+    # aber es ist noch nicht vollstaendig provisioniert (kein Konfigurations-
+    # Datensatz im Backend). Anders als "404 not found".
+    all_not_configured = all(
+        "not configured" in (api_v2("/v2/GetDeviceInfBySN", {"deviceSn": c}).get("info","")).lower()
+        for c in v2_sn_candidates
+    )
+    if all_not_configured:
+        print(f"  ⚠️  Alle Kandidaten: 'Device is not configured'")
+        print(f"     Das Geraet ist in GetDeviceList sichtbar (communicationStatus=1),")
+        print(f"     aber noch nicht vollstaendig im v2-Backend provisioniert.")
+        print(f"     → Dyness-Support kontaktieren wegen v2-Aktivierung fuer dieses Konto/Geraet.")
+    else:
+        print(f"  ⚠️  Alle SN-Varianten gaben Fehler — v2 moeglicherweise nicht aktiviert.")
+    print(f"     Verwende '{v2_sn}' fuer alle weiteren Tests (Rohdaten sichtbar).")
 print()
 
 body_sn_v2   = {"deviceSn": v2_sn}
 alarm_body_v2 = {"deviceSn": v2_sn, "pageNum": 1, "pageSize": 20}
 
-v2_results = {}
+v2_results = {"_v2_only_device": v2_only_device}
 
 # GetDeviceList (alle Serien außer LV/HV-pure)
 res = api_v2("/v2/GetDeviceList", {})
