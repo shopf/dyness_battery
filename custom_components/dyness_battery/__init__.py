@@ -642,6 +642,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     else:
                         data = result.get("data", {})
 
+                    _power_data_list = data if isinstance(data, list) else []
                     if isinstance(data, list):
                         valid = [d for d in data if d.get("soc") is not None]
                         if not valid:
@@ -1272,9 +1273,12 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # 12800       = BMS Temp Max (°C)
                         # 13400       = Strom (A) — negativ = Entladen
                         # 13500       = Pack-Spannung (V)
-                        # 13900       = Raw-SOC (%) → normalisiert auf 18400 = Dyness-App-Wert
-                        # 14100       = Zyklenanzahl
-                        # 18400       = Max-SOC-Limit (%) — z.B. 65% → normiert SOC-Anzeige
+                        # 13600       = Verbleibende Kapazität (kWh)
+                        # 13800       = Gesamtkapazität Modul (kWh)
+                        # 13900       = Zyklenanzahl (Cycle number)
+                        # 14000       = Verbleibende Kapazität (Ah)
+                        # 14100       = Gesamtkapazität Modul (Ah)
+                        # 18400       = Ladetemperatur-Obergrenze (°C)
                         # 18600       = Max. Ladestrom (A)
                         # 18700       = Ladespannungslimit (V)
                         # 18800       = Entladespannungslimit (V)
@@ -1292,46 +1296,37 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["tempMin"]         = rt.get("12600")
                         data["tempMosfet"]      = rt.get("12700")
                         data["tempBmsMax"]      = rt.get("12800")
-                        # 13900 = Zyklenanzahl
-                        # 14100 = Bedeutung ungeklärt — kein Sensor
+                        if data.get("firmwareVersion") is None:
+                            fw_sc = rt.get("10100")
+                            if fw_sc:
+                                data["firmwareVersion"] = fw_sc
                         data["cycleCount"]      = rt.get("13900")
 
-                        # SOC aus /v2/GetRealTimeDataBySN
-                        # v1 Points enthalten keinen SOC für SC/Plus.
-                        # Interne SN (Point 10001) wird als deviceSn für v2 verwendet.
-                        sn_v2 = str(rt.get("10001", "") or "").strip()
-                        if sn_v2:
-                            try:
-                                v2_result = await self._call(
-                                    session, "/v2/GetRealTimeDataBySN", {"deviceSn": sn_v2}
-                                )
-                                if _is_success(v2_result):
-                                    batt_info = (
-                                        (v2_result.get("data") or {})
-                                        .get("batteryInfo") or {}
-                                    )
-                                    soc_v2 = _to_float(batt_info.get("soc"))
-                                    if soc_v2 is not None and 0 <= soc_v2 <= 100:
-                                        data["soc"] = soc_v2
-                                        _LOGGER.debug(
-                                            "Dyness PowerBrick SC/Plus: SOC=%s%% "
-                                            "(v2 API, sn=%s)", soc_v2, sn_v2,
-                                        )
-                                    else:
-                                        _LOGGER.debug(
-                                            "Dyness PowerBrick SC/Plus: v2 SOC nicht "
-                                            "verwertbar (batteryInfo=%s)", batt_info
-                                        )
-                                else:
-                                    _LOGGER.debug(
-                                        "Dyness PowerBrick SC/Plus: v2 Code %s",
-                                        v2_result.get("code"),
-                                    )
-                            except Exception as _e:
-                                _LOGGER.debug(
-                                    "Dyness PowerBrick SC/Plus: v2-Abruf fehlgeschlagen: %s",
-                                    _e
-                                )
+                        # SOC aus getLastPowerDataBySn
+                        # Point 23800 (SOC) ist für PowerBrick SC leer.
+                        # v2/GetRealTimeDataBySN liefert code 500 für APAC-Geräte.
+                        # Korrekte Quelle: getLastPowerDataBySn → soc-Feld (String).
+                        # Die vollständige Liste ist in _power_data_list gespeichert.
+                        _soc_raw_sc = None
+                        if _power_data_list:
+                            for _entry in reversed(_power_data_list):
+                                _s = _entry.get("soc")
+                                if _s is not None:
+                                    _soc_raw_sc = _to_float(_s)
+                                    if _soc_raw_sc is not None and 0 <= _soc_raw_sc <= 100:
+                                        break
+                                    _soc_raw_sc = None
+                        if _soc_raw_sc is not None:
+                            data["soc"] = _soc_raw_sc
+                            _LOGGER.debug(
+                                "Dyness PowerBrick SC/Plus: SOC=%s%% "
+                                "(getLastPowerDataBySn)", _soc_raw_sc,
+                            )
+                        else:
+                            _LOGGER.debug(
+                                "Dyness PowerBrick SC/Plus: Kein gültiger SOC in "
+                                "getLastPowerDataBySn — SOC bleibt unavailable."
+                            )
 
                         # Zellspannungen: Points 10300, 10400, ..., 11800 (16 Zellen)
                         cells_sc = []
@@ -1367,18 +1362,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             else:
                                 data["workStatus"] = "Standby"
 
-                        # Kapazitätsberechnung auf Basis normalisiertem SOC
-                        soc_display = data.get("soc")
+                        # Kapazitätsberechnung auf Basis des SOC aus getLastPowerDataBySn
+                        soc_display = _to_float(data.get("soc"))
                         if bc_sc is not None and soc_display is not None:
                             data["usableKwh"]    = round(bc_sc, 3)
                             data["remainingKwh"] = round(bc_sc * soc_display / 100, 3)
 
                         _LOGGER.debug(
-                            "Dyness PowerBrick SC/Plus: packVoltage=%s V, SOC=%s%% "
-                            "(raw=%s, max=%s), current=%s A, cells=%d, cycleCount=%s",
+                            "Dyness PowerBrick SC/Plus: packVoltage=%s V, SOC=%s%%, "
+                            "current=%s A, cells=%d, cycleCount=%s, firmware=%s",
                             data.get("packVoltage"), data.get("soc"),
-                            raw_soc_sc, max_soc_sc, current_sc,
-                            len(cells_sc), data.get("cycleCount"),
+                            current_sc, len(cells_sc),
+                            data.get("cycleCount"), data.get("firmwareVersion"),
                         )
 
                     elif schema == SCHEMA_CYGNI:
