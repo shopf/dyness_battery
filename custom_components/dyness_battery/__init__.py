@@ -930,37 +930,37 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmTotal"]    = rt.get("9999999")
 
                     elif schema == SCHEMA_POWERBOX_G2:
-                        # PowerBox G2 Schema (modelCode 42) — verifiziert via Log
-                        # Master-Points: 5-stellig (10xxx/12xxx/13xxx/14xxx)
-                        # Sub-Modul-Points identisch mit PowerDepot G2
-                        # batteryCapacity aus station/info = Gesamtkapazität direkt
-                        data["packVoltage"] = rt.get("13500") if rt.get("13500") is not None else data.get("packVoltage")
-                        data["cycleCount"]     = rt.get("13900")
+                        # PowerBox G2 Schema (modelCode 42)
+                        # Master-Points: Standard-Schema 600-Serie (identisch Junior Box / DL5)
+                        data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
+                        if rt.get("800") is not None:
+                            data["soc"] = rt.get("800")
+                        data["soh"]       = rt.get("1200")
+                        data["tempBmsMax"] = rt.get("2800")
+                        data["tempBmsMin"] = rt.get("3000")
+                        data["tempMosfet"] = rt.get("2300")
+                        data["tempMax"]    = rt.get("1800")
+                        data["tempMin"]    = rt.get("2000")
+                        data["alarmStatus1"] = rt.get("3200")
+                        data["alarmStatus2"] = rt.get("3300")
+                        data["alarmTotal"]   = rt.get("4100")
 
-                        # Temperaturen
-                        bms_temp = _to_float(rt.get("12400"))
-                        if bms_temp is not None:
-                            data["tempBmsMax"] = bms_temp
-                        cell_temps = [
-                            _to_float(rt.get(str(12500 + i * 100)))
-                            for i in range(4)
-                        ]
-                        valid_temps = [t for t in cell_temps if t is not None and t > 0]
-                        if valid_temps:
-                            data["tempMax"] = max(valid_temps)
-                            data["tempMin"] = min(valid_temps) if len(valid_temps) > 1 else None
+                        # Zellspannungen aus Master-Points 1300/1500
+                        # Einzelzellen nicht verfügbar auf Master-Ebene (nur Max/Min)
+                        vmax_g2 = _to_float(rt.get("1300"))
+                        vmin_g2 = _to_float(rt.get("1500"))
+                        if vmax_g2 is not None and vmax_g2 > 0:
+                            data["cellVoltageMax"] = vmax_g2
+                        if vmin_g2 is not None and vmin_g2 > 0:
+                            data["cellVoltageMin"] = vmin_g2
+                        if vmax_g2 is not None and vmin_g2 is not None and vmax_g2 > 0 and vmin_g2 > 0:
+                            data["cellVoltageDiffMv"] = round((vmax_g2 - vmin_g2) * 1000, 1)
+                        data["cellVoltageMaxModule"] = rt.get("1401")
+                        data["cellVoltageMaxCell"]   = rt.get("1402")
+                        data["cellVoltageMinModule"] = rt.get("1601")
+                        data["cellVoltageMinCell"]   = rt.get("1602")
 
-                        # Zellspannungen aus Sub-Modul-Daten (10300–11800)
-                        cells = []
-                        for i in range(1, 17):
-                            v = _to_float(rt.get(str(10200 + i * 100)))
-                            if v is not None and v > 0:
-                                cells.append(v)
-                        if cells:
-                            data["cellVoltageMax"] = max(cells)
-                            data["cellVoltageMin"] = min(cells)
-
-                        # Kapazität: station/info = Gesamtkapazität direkt (kein × n_modules)
+                        # Kapazität
                         bc  = _to_float(data.get("batteryCapacity"))
                         soc = _to_float(data.get("soc"))
                         soh = _to_float(data.get("soh"))
@@ -969,11 +969,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["usableKwh"]    = round(bc * soh_factor, 3)
                             data["remainingKwh"] = round(bc * soh_factor * soc / 100, 3)
 
-                        # Voltage + Current Limits
-                        cv = _to_float(rt.get("18700"))
-                        dv = _to_float(rt.get("18800"))
-                        cl = _to_float(rt.get("18600"))
-                        dl = _to_float(rt.get("19200"))
+                        # Strom- und Spannungslimits (Standard-Points wie Junior Box)
+                        cv = _to_float(rt.get("3600"))
+                        dv = _to_float(rt.get("3700"))
+                        cl = _to_float(rt.get("3800"))
+                        dl = _to_float(rt.get("3900"))
                         if cv is not None and cv > 0:
                             data["chargeVoltageLimit"]    = cv
                         if dv is not None and dv > 0:
@@ -985,9 +985,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                         _LOGGER.debug(
                             "Dyness PowerBox G2: packVoltage=%s V, SOC=%s%%, "
-                            "cells=%d, tempMax=%s°C",
+                            "tempMax=%s°C, cellMax=%s V, cellMin=%s V",
                             data.get("packVoltage"), soc,
-                            len(cells), data.get("tempMax"),
+                            data.get("tempMax"), data.get("cellVoltageMax"),
+                            data.get("cellVoltageMin"),
                         )
 
                     elif schema == SCHEMA_POWERDEPOT:
@@ -1186,6 +1187,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["cellVoltageMin"]        = rt.get("1500")
                         data["cellVoltageMinModule"]  = rt.get("1601")
                         data["cellVoltageMinCell"]    = rt.get("1602")
+                        # Individuelle Zellspannungen: Points 10300–11800 (16 Zellen)
+                        cells_pb = []
+                        for i in range(1, 17):
+                            v = _to_float(rt.get(str(10200 + i * 100)))
+                            if v is not None and v > 0:
+                                cells_pb.append(v)
+                                data[f"cellVoltage{i:02d}"] = v
+                        if cells_pb:
+                            data["cellVoltageDiffMv"] = round((max(cells_pb) - min(cells_pb)) * 1000, 1)
                         data["tempMax"]               = rt.get("1800")
                         data["tempMin"]               = rt.get("2000")
                         data["tempMosfet"]            = rt.get("2300")
@@ -1302,30 +1312,52 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 data["firmwareVersion"] = fw_sc
                         data["cycleCount"]      = rt.get("13900")
 
-                        # SOC aus getLastPowerDataBySn
-                        # Point 23800 (SOC) ist für PowerBrick SC leer.
-                        # v2/GetRealTimeDataBySN liefert code 500 für APAC-Geräte.
-                        # Korrekte Quelle: getLastPowerDataBySn → soc-Feld (String).
-                        # Die vollständige Liste ist in _power_data_list gespeichert.
+                        # SOC: Dual-Fallback
+                        # Versuch 1: v2/GetRealTimeDataBySN → batteryInfo.soc
+                        #   EU-Geräte (PowerBrick Plus, modelCode 328): v2 liefert SOC korrekt.
+                        # Versuch 2: getLastPowerDataBySn → soc
+                        #   APAC-Geräte (PowerBrick SC, modelCode 226): v2 code 500,
+                        #   aber getLastPowerDataBySn liefert SOC als String.
+                        # Point 23800 ist bei beiden Varianten leer.
                         _soc_raw_sc = None
-                        if _power_data_list:
+                        _sn_v2_sc = str(rt.get("10001", "") or "").strip()
+                        if _sn_v2_sc:
+                            try:
+                                _v2_res = await self._call(
+                                    session, "/v2/GetRealTimeDataBySN", {"deviceSn": _sn_v2_sc}
+                                )
+                                if _is_success(_v2_res):
+                                    _bi = (_v2_res.get("data") or {}).get("batteryInfo") or {}
+                                    _soc_v2 = _to_float(_bi.get("soc"))
+                                    if _soc_v2 is not None and 0 < _soc_v2 <= 100:
+                                        _soc_raw_sc = _soc_v2
+                                        _LOGGER.debug(
+                                            "Dyness PowerBrick SC/Plus: SOC=%s%% (v2 API, sn=%s)",
+                                            _soc_raw_sc, _sn_v2_sc,
+                                        )
+                            except Exception as _e_sc:
+                                _LOGGER.debug(
+                                    "Dyness PowerBrick SC/Plus: v2-Abruf fehlgeschlagen: %s", _e_sc
+                                )
+                        # Fallback: getLastPowerDataBySn (APAC-Geräte, v2 liefert code 500)
+                        if _soc_raw_sc is None and _power_data_list:
                             for _entry in reversed(_power_data_list):
                                 _s = _entry.get("soc")
                                 if _s is not None:
-                                    _soc_raw_sc = _to_float(_s)
-                                    if _soc_raw_sc is not None and 0 <= _soc_raw_sc <= 100:
+                                    _soc_fb = _to_float(_s)
+                                    if _soc_fb is not None and 0 < _soc_fb <= 100:
+                                        _soc_raw_sc = _soc_fb
+                                        _LOGGER.debug(
+                                            "Dyness PowerBrick SC/Plus: SOC=%s%% "
+                                            "(getLastPowerDataBySn, Fallback)", _soc_raw_sc,
+                                        )
                                         break
-                                    _soc_raw_sc = None
                         if _soc_raw_sc is not None:
                             data["soc"] = _soc_raw_sc
-                            _LOGGER.debug(
-                                "Dyness PowerBrick SC/Plus: SOC=%s%% "
-                                "(getLastPowerDataBySn)", _soc_raw_sc,
-                            )
                         else:
                             _LOGGER.debug(
-                                "Dyness PowerBrick SC/Plus: Kein gültiger SOC in "
-                                "getLastPowerDataBySn — SOC bleibt unavailable."
+                                "Dyness PowerBrick SC/Plus: Kein SOC verfügbar "
+                                "(v2 code 500 + getLastPowerDataBySn leer)."
                             )
 
                         # Zellspannungen: Points 10300, 10400, ..., 11800 (16 Zellen)
@@ -1334,9 +1366,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             v = _to_float(rt.get(str(10200 + i * 100)))
                             if v is not None and v > 0:
                                 cells_sc.append(v)
+                                data[f"cellVoltage{i:02d}"] = v
                         if cells_sc:
                             data["cellVoltageMax"] = max(cells_sc)
                             data["cellVoltageMin"] = min(cells_sc)
+                            data["cellVoltageDiffMv"] = round((max(cells_sc) - min(cells_sc)) * 1000, 1)
 
                         # Strom- und Spannungslimits
                         cv_sc = _to_float(rt.get("18700"))
