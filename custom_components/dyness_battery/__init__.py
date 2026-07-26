@@ -42,13 +42,13 @@ STALE_ENTITY_KEYS = {
 # 1-2 Module → 5 Min, 3-4 Module → 10 Min, 5+ Module → 15 Min
 # Rate-Limiting: Dyness API erlaubt ≤ 2 Anfragen/Sekunde (offiziell bestätigt via Dyness-Doku).
 # 1.0s hat sich als stabiler Kompromiss erwiesen. 0.5s/0.8s verursachten 429-Burst-Fehler
-# bei Sub-Modul-Calls (Issue #26). 1.5s (original) war zu konservativ.
+# bei Sub-Modul-Calls. 1.5s (original) war zu konservativ.
 _MIN_CALL_INTERVAL = 1.0
 _RATE_LIMIT_BACKOFF = 10
 _MAX_RETRIES = 3
 # Sub-Modul-Calls: kein Retry bei 429 — sofort aufgeben und letzten bekannten Wert
 # beibehalten. Retries mit langen Wartezeiten blockieren den gesamten Update-Zyklus
-# und führen zu stagnierenden Sensoren (Issue #26, v2.3.9.1).
+# und führen zu stagnierenden Sensoren.
 _MODULE_MAX_RETRIES = 0
 
 # Gültige BMS-Suffixe
@@ -95,6 +95,7 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     # PowerBrick (modelCode 43)
     # PowerBrick SC (modelCode 226)
     # PowerBrick Plus — identisches Point-Schema wie PowerBrick SC
+    "POWERBRICK-PRO":   SCHEMA_POWERBRICK,
     "POWERBRICK-SC":    SCHEMA_POWERBRICK_SC,
     "POWERBRICK-PLUS":  SCHEMA_POWERBRICK_SC,
     "POWERBRICK":       SCHEMA_POWERBRICK,
@@ -291,7 +292,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         self._module_sns: list[str] = []
         self._last_call_time: float = 0.0
         self._storage_list_cycle: int = 0  # Zähler für storage/list Throttling
-        # Optimierung (Issue #32): getLastRunningDataBySn überspringen wenn einmal
+        # Optimierung: getLastRunningDataBySn überspringen wenn einmal
         # alle Felder null waren — typisch bei reinen Batteriesystemen ohne Wechselrichter.
         # Wird auf False zurückgesetzt wenn sich das Gerät-Schema ändert (z.B. Wechselrichter
         # nachgerüstet), was einen HA-Reload erfordert.
@@ -307,7 +308,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         """Rate-limitierter API-Aufruf mit optionalem Retry bei HTTP 429.
         
         max_retries=0 für Sub-Modul-Calls: sofort aufgeben bei 429 statt lange
-        zu warten und den Update-Zyklus zu blockieren (Issue #26).
+        zu warten und den Update-Zyklus zu blockieren.
         """
         elapsed = time.monotonic() - self._last_call_time
         if elapsed < _MIN_CALL_INTERVAL:
@@ -549,10 +550,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 # vielen gleichzeitigen Koordinatoren) → DEBUG statt WARNING
                                 _LOGGER.debug("Dyness Modul %s: Code %s", sn, code)
                                 # Bei 429 oder anderen Fehlern: alten Wert beibehalten statt
-                                # das Modul aus module_data zu entfernen (Issue #26 — Slave
-                                # Sensoren wurden Unavailable wenn nur ein Sub-Modul-Call
-                                # rate-limited wurde, weil new_module_data das Modul nicht
-                                # enthielt und self.module_data dann überschrieben wurde).
+                                # das Modul aus module_data zu entfernen
                                 if sn in self.module_data:
                                     new_module_data[sn] = self.module_data[sn]
                                     _LOGGER.debug(
@@ -568,7 +566,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         self.module_data = new_module_data
 
                     # ── getLastRunningDataBySn (bei jedem Update) ─────────────
-                    # Optimierung (Issue #32): Nach erstem All-Null-Response überspringen.
+                    # Optimierung: Nach erstem All-Null-Response überspringen.
                     # Spart 1 API-Call/Zyklus bei reinen Batteriesystemen (Tower, PowerDepot,
                     # PowerBrick, Stack100 etc.) ohne Wechselrichter.
                     if self._running_data_all_null:
@@ -735,7 +733,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     if schema == SCHEMA_STACK100:
                         # Stack100 Schema — Points direkt vom BMS Master
                         data["packVoltage"] = rt.get("1100") if rt.get("1100") is not None else data.get("packVoltage")
-                        # Fix 3 (Issue #28): SOC aus Point 1400 (live, pointNameCn="SOC"),
+                        # SOC aus Point 1400 (live, pointNameCn="SOC"),
                         # nicht aus getLastPowerDataBySn (kann veraltet sein, z.B. Vortag).
                         if rt.get("1400") is not None:
                             data["soc"] = rt.get("1400")
@@ -832,7 +830,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["outEnergyTotal"] = rt.get("7700")
                             data["outEnergyToday"] = rt.get("7800")
                     elif schema == SCHEMA_POWERBOX_PRO:
-                        # PowerBox Pro / PowerHaus Schema — verifiziert via Log
+                        # PowerBox Pro / PowerHaus Schema
                         # batteryCapacity aus station/info = Gesamtkapazität direkt
                         # (kein × n_modules — unabhängig von Modulanzahl)
                         # Points verifiziert:
@@ -935,15 +933,21 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
                         if rt.get("800") is not None:
                             data["soc"] = rt.get("800")
+                        if rt.get("700") is not None:
+                            data["realTimeCurrent"] = rt.get("700")
                         data["soh"]       = rt.get("1200")
                         data["tempBmsMax"] = rt.get("2800")
                         data["tempBmsMin"] = rt.get("3000")
                         data["tempMosfet"] = rt.get("2300")
                         data["tempMax"]    = rt.get("1800")
                         data["tempMin"]    = rt.get("2000")
+                        data["temp"]       = rt.get("1800")
                         data["alarmStatus1"] = rt.get("3200")
                         data["alarmStatus2"] = rt.get("3300")
                         data["alarmTotal"]   = rt.get("4100")
+                        bal_g2 = rt.get("3100")
+                        if bal_g2 is not None:
+                            data["balancingStatus"] = str(bal_g2) != "0"
 
                         # Zellspannungen aus Master-Points 1300/1500
                         # Einzelzellen nicht verfügbar auf Master-Ebene (nur Max/Min)
@@ -978,7 +982,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["chargeVoltageLimit"]    = cv
                         if dv is not None and dv > 0:
                             data["dischargeVoltageLimit"] = dv
-                        if cl is not None and cl > 0:
+                        if cl is not None:
                             data["chargeCurrentLimit"]    = cl
                         if dl is not None and dl > 0:
                             data["dischargeCurrentLimit"] = dl
@@ -987,8 +991,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             "Dyness PowerBox G2: packVoltage=%s V, SOC=%s%%, "
                             "tempMax=%s°C, cellMax=%s V, cellMin=%s V",
                             data.get("packVoltage"), soc,
-                            data.get("tempMax"), data.get("cellVoltageMax"),
-                            data.get("cellVoltageMin"),
+                            data.get("realTimeCurrent"), data.get("tempMax"),
+                            data.get("cellVoltageMax"), data.get("cellVoltageMin"),
+                            data.get("balancingStatus"),
                         )
 
                     elif schema == SCHEMA_POWERDEPOT:
@@ -1033,7 +1038,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["chargeVoltageLimit"]    = cv
                         if dv is not None and dv > 0:
                             data["dischargeVoltageLimit"] = dv
-                        # Letzten bekannten Wert beibehalten wenn Point fehlt/null (Issue #29):
+                        # Letzten bekannten Wert beibehalten wenn Point fehlt/null:
                         # chargeCurrentLimit verschwindet wenn ein Zyklus keinen Wert liefert,
                         # weil data[] jedes Mal neu aufgebaut wird.
                         if cl is not None and cl > 0:
@@ -1047,7 +1052,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                         # Alarm Status 1/2 (Points 3200/3300) — bei anderen Schemas
                         # gesetzt, im POWERDEPOT-Block bisher übersehen, obwohl die
-                        # Points im realTime/data vorhanden sind (Issue #29).
+                        # Points im realTime/data vorhanden sind.
                         data["alarmStatus1"] = rt.get("3200")
                         data["alarmStatus2"] = rt.get("3300")
 
@@ -1066,7 +1071,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # erst nach dem Schema-Block gesetzt wird (Zeile ~1249).
                         # WICHTIG 2: _parse_module_points liefert "cycle_count" (snake_case,
                         # Point 13900), nicht "cycleCount" — vorheriger Fix-Versuch griff
-                        # wegen Key-Mismatch ins Leere (Issue #29 Folgereport).
+                        # wegen Key-Mismatch ins Leere.
                         mod_cycles = [
                             _to_float(m.get("cycle_count"))
                             for m in self.module_data.values()
@@ -1086,7 +1091,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         if mod_temps:
                             data["temp"] = round(sum(mod_temps) / len(mod_temps), 1)
 
-                        # workStatus: direkt aus realTimeCurrent ableiten (Issue #29, seit v2.3.5).
+                        # workStatus: direkt aus realTimeCurrent ableiten.
                         # batteryStatus wird erst NACH dem Schema-Block berechnet (Zeile ~1269),
                         # deshalb ist data.get("batteryStatus") hier immer None → workStatus
                         # blieb dauerhaft "Standby". Fix: Strom aus Point 700 direkt auswerten.
@@ -1132,7 +1137,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     elif schema == SCHEMA_POWERBRICK:
                         # PowerBrick Schema (modelCode 43) — Standalone-Batteriesystem
-                        # Verifiziert via Issue #36 Log (14.336 kWh, 1 Modul, Portugal)
                         #
                         # Point-Schema nahezu identisch zu SCHEMA_POWERDEPOT G2,
                         # aber immer Einzelmodul (Point 400 = 1) → kein Sub-Modul-Abruf.
@@ -1179,6 +1183,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                         data["packVoltage"]          = rt.get("600")
                         data["realTimeCurrent"]       = rt.get("700")
+                        # realTimePower: V × A direkt berechnet (unabhängig von getLastPowerDataBySn)
+                        _v_pb = _to_float(rt.get("600"))
+                        _i_pb = _to_float(rt.get("700"))
+                        if _v_pb is not None and _i_pb is not None:
+                            data["realTimePower"] = round(_v_pb * _i_pb, 1)
                         data["soc"]                   = rt.get("800")
                         data["soh"]                   = rt.get("1200")
                         data["cellVoltageMax"]        = rt.get("1300")
@@ -1227,7 +1236,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["usableKwh"]    = round(bc_val * soh_f, 3)
                             data["remainingKwh"] = round(bc_val * soh_f * soc_pb / 100, 3)
 
-                        # Alarm-Bits PowerBrick (Points 3201-3208, Issue #36):
+                        # Alarm-Bits PowerBrick (Points 3201-3208):
                         data["alarmSpreadV"] = str(rt.get("3201", "0")) != "0"
                         data["alarmSpreadT"] = str(rt.get("3202", "0")) != "0"
                         data["alarmInsul"]   = str(rt.get("3205", "0")) != "0"
@@ -1412,7 +1421,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     elif schema == SCHEMA_CYGNI:
                         # Cygni 10.0HS-M8 Schema (modelCode 192) — Hybrid-Wechselrichter
-                        # Verifiziert via API-Log (Discussion #18)
                         #
                         # Besonderheiten:
                         # - Keine Sub-Module (SUB leer)

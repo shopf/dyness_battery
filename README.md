@@ -6,7 +6,7 @@
 
 Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** über die Dyness Cloud API.
 
-> **Hinweis / Note:** Diese Integration nutzt die Dyness Open API (Cloud). Eine Internetverbindung ist erforderlich. Daten werden alle 5 Minuten aktualisiert (API-Limit).
+> **Hinweis / Note:** Diese Integration nutzt die Dyness Open API (Cloud). Eine Internetverbindung ist erforderlich. Daten werden alle 5 Minuten aktualisiert (API-Limit).\
 > This integration uses the Dyness Open API (Cloud). An internet connection is required. Data is updated every 5 minutes (API limit).
 
 ---
@@ -20,12 +20,16 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 | Dyness Cygni 10.0HS | ✅ Getestet |
 | Dyness DL5.0C | ✅ Getestet |
 | Dyness Junior Box | ✅ Getestet |
-| Dyness Powerbox G2 | ✅ Getestet (Grundfunktionen) |
+| Dyness Powerbox G2 | ✅ Getestet |
 | Dyness PowerBox Pro | ✅ Getestet |
 | Dyness PowerHaus | ✅ Getestet |
+| Dyness PowerBrick | ✅ Getestet |
+| Dyness PowerBrick PRO | ✅ Getestet |
+| Dyness PowerBrick SC | ✅ Getestet |
+| Dyness PowerBrick Plus | ✅ Getestet |
 | Dyness Stack100 | ✅ Getestet |
-| Dyness Tower Pro TP7 | ✅ Getestet |
-| Dyness Tower T14 | ✅ Getestet |
+| Dyness Tower Pro TP7 / TP11 / TP15 | ✅ Getestet |
+| Dyness Tower T14 / T17 | ✅ Getestet |
 | Andere Dyness-Modelle mit WiFi-Dongle | ⚠️ Nicht getestet – Feedback willkommen |
 
 > Die Integration erkennt das Gerät automatisch über die API und registriert nur die Sensoren, die für das jeweilige Gerät verfügbar sind.
@@ -44,35 +48,48 @@ Die folgenden Sensoren sind für **alle Geräte** verfügbar:
 | Leistung | W |
 | Strom | A |
 | Batteriestatus (Charging / Discharging / Standby) | – |
+| Letzte Aktualisierung | Zeitstempel |
+| Verbindungsstatus | Online / Offline |
+| Betriebsstatus | – |
+| Firmware-Version | – |
 
 Weitere Sensoren werden automatisch aktiviert, sofern das Gerät die Daten liefert:
 
-| Sensor | Einheit | Junior Box | Tower T14 / TP7 | DL5.0C / Stack100 / PowerBox Pro | PowerHaus | Powerbox G2 |
-|--------|---------|:---:|:---:|:---:|:---:|:---:|
-| Pack-Spannung | V | ✅ | – | ✅ | ✅ | ✅ |
-| Batteriezustand (SOH) | % | ✅ | ✅ | ✅ | ✅ | – |
-| Temperatur Max | °C | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Temperatur Min | °C | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Zellspannung Max | V | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Zellspannung Min | V | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Zellspannungsdifferenz | mV | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Nutzbare Kapazität | kWh | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Verbleibende Energie | kWh | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Ladezyklen | – | – | ✅ | ✅ | ✅ | ✅ |
-| Heute geladen | kWh | ✅ | – | ✅ | – | – |
-| Heute entladen | kWh | ✅ | – | ✅ | – | – |
-| Gesamt geladen | kWh | ✅ | ✅ | ✅ | – | – |
-| Gesamt entladen | kWh | ✅ | – | ✅ | – | – |
-| MOSFET-Temperatur | °C | ✅ | – | ✅ | ✅ | – |
-| BMS-Temperatur Max | °C | ✅ | – | ✅ | ✅ | – |
-| BMS-Temperatur Min | °C | ✅ | – | ✅ | ✅ | – |
-| Alarmstatus | – | ✅ | ✅ | ✅ | ✅ | – |
+| Sensor | Einheit | Junior Box | Tower T14/T17/TP | DL5.0C / Stack100 / PowerBox Pro | PowerHaus | Powerbox G2 | PowerBrick / PRO | PowerBrick SC / Plus |
+|--------|---------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Pack-Spannung | V | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Batteriezustand (SOH) | % | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | – |
+| Temperatur | °C | – | – | – | – | ✅ | – | – |
+| Temperatur Max | °C | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Temperatur Min | °C | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MOSFET-Temperatur | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BMS-Temperatur Max | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BMS-Temperatur Min | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Zellspannung Max | V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Zellspannung Min | V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Zellspannungsdifferenz | mV | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Zelle 01–16 (Einzelspannungen) | V | – | – | – | – | – | ✅ ² | ✅ ² |
+| Nutzbare Kapazität | kWh | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Verbleibende Energie | kWh | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Ladezyklen | – | – | ✅ | ✅ | ✅ | – | ✅ | ✅ |
+| Heute geladen | kWh | ✅ | – | ✅ | – | – | – | – |
+| Heute entladen | kWh | ✅ | – | ✅ | – | – | – | – |
+| Gesamt geladen | kWh | ✅ | ✅ | ✅ | – | – | – | – |
+| Gesamt entladen | kWh | ✅ | – | ✅ | – | – | – | – |
+| Balancing-Status | – | ✅ | – | ✅ | – | ✅ | – | – |
+| Alarmstatus | – | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | – |
+| Ladespannungsgrenze | V | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Entladespannungsgrenze | V | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Max. Ladestrom | A | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Max. Entladestrom | A | – | – | ✅ | – | ✅ | ✅ | ✅ |
+
+> ² Einzelne Zellspannungen (Zelle 01–16) sind standardmäßig **deaktiviert** und können in HA unter Einstellungen → Geräte & Dienste → Dyness Battery → Gerät → Entitäten aktiviert werden.
 
 #### Modul-Ebene (Sub-Module Devices)
 
-Geräte mit mehreren Modulen (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower Pro TP7) erstellen automatisch ein eigenes Device pro Modul:
+Geräte mit mehreren Modulen (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower Pro TP7/TP11/TP15) erstellen automatisch ein eigenes Device pro Modul:
 
-| Sensor | Einheit | DL5.0C / Stack100 / PowerBox Pro | Tower T14 / TP7 |
+| Sensor | Einheit | DL5.0C / Stack100 / PowerBox Pro | Tower T14/T17 / TP |
 |--------|---------|:---:|:---:|
 | Ladestand Modul (SOC) | % | ✅ | – ¹ |
 | Batteriezustand Modul (SOH) | % | ✅ | – ¹ |
@@ -84,22 +101,12 @@ Geräte mit mehreren Modulen (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower P
 | Zellspannungsdifferenz | mV | ✅ | ✅ |
 | Zelltemperatur 1 | °C | ✅ | ✅ |
 | Zelltemperatur 2 | °C | ✅ | ✅ |
-| Zelle 01 – 16 (DL5.0C) | V | ✅ | – |
-| Zelle 01 – 30 (Tower T14 / TP7) | V | – | ✅ |
+| Zelle 01–16 (DL5.0C / Stack100 / PowerBox Pro) | V | ✅ ² | – |
+| Zelle 01–30 (Tower T14/T17 / TP7/TP11/TP15) | V | – | ✅ ² |
 
-> ¹ Tower T14 / TP7: SOC, SOH, Spannung, Strom und Zyklen sind nur auf Systemebene (Haupt-Device) verfügbar — die API liefert diese Werte nicht pro Modul.
+> ¹ Tower T14/T17 / TP: SOC, SOH, Spannung, Strom und Zyklen sind nur auf Systemebene (Haupt-Device) verfügbar — die API liefert diese Werte nicht pro Modul.
 
-> Einzelne Zellspannungen sind standardmäßig **deaktiviert** und können in HA unter Einstellungen → Geräte & Dienste → Dyness Battery → Gerät → Entitäten aktiviert werden.
-
-#### Diagnose-Sensoren (alle Geräte)
-
-| Sensor | Beschreibung |
-|--------|-------------|
-| Letzte Aktualisierung | Zeitstempel der letzten Datenübertragung |
-| Batteriekapazität | Installierte Kapazität laut API |
-| Verbindungsstatus | Online / Offline |
-| Betriebsstatus | z.B. RunMode, StandBy, Charging |
-| Firmware-Version | Aktuelle Firmware |
+> ² Einzelne Zellspannungen sind standardmäßig **deaktiviert** und können in HA unter Einstellungen → Geräte & Dienste → Dyness Battery → Gerät → Entitäten aktiviert werden.
 
 ---
 
@@ -167,12 +174,16 @@ Du hast ein anderes Dyness-Modell und möchtest es hinzufügen lassen? Erstelle 
 | Dyness Cygni 10.0HS | ✅ Tested |
 | Dyness DL5.0C | ✅ Tested |
 | Dyness Junior Box | ✅ Tested |
-| Dyness Powerbox G2 | ✅ Tested (basic features) |
+| Dyness Powerbox G2 | ✅ Tested |
 | Dyness PowerBox Pro | ✅ Tested |
-| Dyness Stack100 | ✅ Tested |
 | Dyness PowerHaus | ✅ Tested |
-| Dyness Tower Pro TP7 | ✅ Tested |
-| Dyness Tower T14 | ✅ Tested |
+| Dyness PowerBrick | ✅ Tested |
+| Dyness PowerBrick PRO | ✅ Tested |
+| Dyness PowerBrick SC | ✅ Tested |
+| Dyness PowerBrick Plus | ✅ Tested |
+| Dyness Stack100 | ✅ Tested |
+| Dyness Tower Pro TP7 / TP11 / TP15 | ✅ Tested |
+| Dyness Tower T14 / T17 | ✅ Tested |
 | Other Dyness models with WiFi dongle | ⚠️ Not tested – feedback welcome |
 
 > The integration automatically detects the device via the API and only registers sensors available for that specific device.
@@ -191,35 +202,48 @@ Available for **all devices**:
 | Power | W |
 | Current | A |
 | Battery Status (Charging / Discharging / Standby) | – |
+| Last Update | Timestamp |
+| Communication Status | Online / Offline |
+| Work Status | – |
+| Firmware Version | – |
 
 Additional sensors enabled automatically if provided by the device:
 
-| Sensor | Unit | Junior Box | Tower T14 / TP7 | DL5.0C / Stack100 / PowerBox Pro | PowerHaus | Powerbox G2 |
-|--------|------|:---:|:---:|:---:|:---:|:---:|
-| Pack Voltage | V | ✅ | – | ✅ | ✅ | ✅ |
-| State of Health (SOH) | % | ✅ | ✅ | ✅ | ✅ | – |
-| Temperature Max | °C | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Temperature Min | °C | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cell Voltage Max | V | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cell Voltage Min | V | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cell Voltage Spread | mV | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Usable Capacity | kWh | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Energy Remaining | kWh | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cycle Count | – | – | ✅ | ✅ | ✅ | ✅ |
-| Energy Charged Today | kWh | ✅ | – | ✅ | – | – |
-| Energy Discharged Today | kWh | ✅ | – | ✅ | – | – |
-| Energy Charged Total | kWh | ✅ | ✅ | ✅ | – | – |
-| Energy Discharged Total | kWh | ✅ | – | ✅ | – | – |
-| MOSFET Temperature | °C | ✅ | – | ✅ | ✅ | – |
-| BMS Temperature Max | °C | ✅ | – | ✅ | ✅ | – |
-| BMS Temperature Min | °C | ✅ | – | ✅ | ✅ | – |
-| Alarm Status | – | ✅ | ✅ | ✅ | ✅ | – |
+| Sensor | Unit | Junior Box | Tower T14/T17/TP | DL5.0C / Stack100 / PowerBox Pro | PowerHaus | Powerbox G2 | PowerBrick / PRO | PowerBrick SC / Plus |
+|--------|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Pack Voltage | V | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| State of Health (SOH) | % | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | – |
+| Temperature | °C | – | – | – | – | ✅ | – | – |
+| Temperature Max | °C | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Temperature Min | °C | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MOSFET Temperature | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BMS Temperature Max | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BMS Temperature Min | °C | ✅ | – | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cell Voltage Max | V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cell Voltage Min | V | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cell Voltage Spread | mV | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cell 01–16 (individual voltages) | V | – | – | – | – | – | ✅ ² | ✅ ² |
+| Usable Capacity | kWh | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Energy Remaining | kWh | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cycle Count | – | – | ✅ | ✅ | ✅ | – | ✅ | ✅ |
+| Energy Charged Today | kWh | ✅ | – | ✅ | – | – | – | – |
+| Energy Discharged Today | kWh | ✅ | – | ✅ | – | – | – | – |
+| Energy Charged Total | kWh | ✅ | ✅ | ✅ | – | – | – | – |
+| Energy Discharged Total | kWh | ✅ | – | ✅ | – | – | – | – |
+| Balancing Status | – | ✅ | – | ✅ | – | ✅ | – | – |
+| Alarm Status | – | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | – |
+| Charge Voltage Limit | V | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Discharge Voltage Limit | V | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Max Charge Current | A | – | – | ✅ | – | ✅ | ✅ | ✅ |
+| Max Discharge Current | A | – | – | ✅ | – | ✅ | ✅ | ✅ |
+
+> ² Individual cell voltages (Cell 01–16) are **disabled by default** and can be enabled in HA under Settings → Devices & Services → Dyness Battery → Device → Entities.
 
 #### Module Level (Sub-Module Devices)
 
-Devices with multiple modules (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower Pro TP7) automatically create a separate device per module:
+Devices with multiple modules (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower Pro TP7/TP11/TP15) automatically create a separate device per module:
 
-| Sensor | Unit | DL5.0C / Stack100 / PowerBox Pro | Tower T14 / TP7 |
+| Sensor | Unit | DL5.0C / Stack100 / PowerBox Pro | Tower T14/T17 / TP |
 |--------|------|:---:|:---:|
 | Module SOC | % | ✅ | – ¹ |
 | Module SOH | % | ✅ | – ¹ |
@@ -231,22 +255,12 @@ Devices with multiple modules (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower 
 | Cell Voltage Spread | mV | ✅ | ✅ |
 | Cell Temperature 1 | °C | ✅ | ✅ |
 | Cell Temperature 2 | °C | ✅ | ✅ |
-| Cell 01 – 16 (DL5.0C) | V | ✅ | – |
-| Cell 01 – 30 (Tower T14 / TP7) | V | – | ✅ |
+| Cell 01–16 (DL5.0C / Stack100 / PowerBox Pro) | V | ✅ ² | – |
+| Cell 01–30 (Tower T14/T17 / TP7/TP11/TP15) | V | – | ✅ ² |
 
-> ¹ Tower T14 / TP7: SOC, SOH, Voltage, Current and Cycle Count are only available at system level (main device) — the API does not provide these values per module.
+> ¹ Tower T14/T17 / TP: SOC, SOH, Voltage, Current and Cycle Count are only available at system level (main device) — the API does not provide these values per module.
 
-> Individual cell voltages are **disabled by default** and can be enabled in HA under Settings → Devices & Services → Dyness Battery → Device → Entities.
-
-#### Diagnostic Sensors (all devices)
-
-| Sensor | Description |
-|--------|-------------|
-| Last Update | Timestamp of last data transmission |
-| Battery Capacity | Installed capacity per API |
-| Communication Status | Online / Offline |
-| Work Status | e.g. RunMode, StandBy, Charging |
-| Firmware Version | Current firmware version |
+> ² Individual cell voltages are **disabled by default** and can be enabled in HA under Settings → Devices & Services → Dyness Battery → Device → Entities.
 
 ---
 
@@ -297,7 +311,7 @@ Devices with multiple modules (DL5.0C, Stack100, PowerBox Pro, Tower T14, Tower 
 
 ### Adding a New Model
 
-Open an [Issue](https://github.com/shopf/dyness_battery/issues) with the output of the API test script `tools/dyness_test.py`:
+Open an [Issue](https://github.com/shopf/dyness_battery/issues) with the output of the API test script `tools/dyness_test.py`.
 
 ---
 
