@@ -928,43 +928,100 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmTotal"]    = rt.get("9999999")
 
                     elif schema == SCHEMA_POWERBOX_G2:
-                        # PowerBox G2 Schema (modelCode 42)
-                        # Master-Points: Standard-Schema 600-Serie (identisch Junior Box / DL5)
-                        data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
-                        if rt.get("800") is not None:
-                            data["soc"] = rt.get("800")
-                        if rt.get("700") is not None:
-                            data["realTimeCurrent"] = rt.get("700")
-                        data["soh"]       = rt.get("1200")
-                        data["tempBmsMax"] = rt.get("2800")
-                        data["tempBmsMin"] = rt.get("3000")
-                        data["tempMosfet"] = rt.get("2300")
-                        data["tempMax"]    = rt.get("1800")
-                        data["tempMin"]    = rt.get("2000")
-                        data["temp"]       = rt.get("1800")
-                        data["alarmStatus1"] = rt.get("3200")
-                        data["alarmStatus2"] = rt.get("3300")
-                        data["alarmTotal"]   = rt.get("4100")
-                        bal_g2 = rt.get("3100")
-                        if bal_g2 is not None:
-                            data["balancingStatus"] = str(bal_g2) != "0"
+                        # PowerBox G2 Schema (modelCode 42) — zwei API-Varianten bekannt:
+                        #
+                        # Variante A (600-Serie): Standard-Points wie Junior Box
+                        # Variante B (10xxx-Serie): identisch PowerBrick SC/Plus
+                        #
+                        # Erkennung: Point 600 vorhanden → Variante A, sonst Variante B
+                        _g2_var_a = rt.get("600") is not None and rt.get("600") != ""
 
-                        # Zellspannungen aus Master-Points 1300/1500
-                        # Einzelzellen nicht verfügbar auf Master-Ebene (nur Max/Min)
-                        vmax_g2 = _to_float(rt.get("1300"))
-                        vmin_g2 = _to_float(rt.get("1500"))
-                        if vmax_g2 is not None and vmax_g2 > 0:
-                            data["cellVoltageMax"] = vmax_g2
-                        if vmin_g2 is not None and vmin_g2 > 0:
-                            data["cellVoltageMin"] = vmin_g2
-                        if vmax_g2 is not None and vmin_g2 is not None and vmax_g2 > 0 and vmin_g2 > 0:
-                            data["cellVoltageDiffMv"] = round((vmax_g2 - vmin_g2) * 1000, 1)
-                        data["cellVoltageMaxModule"] = rt.get("1401")
-                        data["cellVoltageMaxCell"]   = rt.get("1402")
-                        data["cellVoltageMinModule"] = rt.get("1601")
-                        data["cellVoltageMinCell"]   = rt.get("1602")
+                        if _g2_var_a:
+                            # ── Variante A: 600-Serie ──────────────────────────────
+                            data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
+                            if rt.get("800") is not None:
+                                data["soc"] = rt.get("800")
+                            if rt.get("700") is not None:
+                                data["realTimeCurrent"] = rt.get("700")
+                            data["soh"]          = rt.get("1200")
+                            data["tempBmsMax"]   = rt.get("2800")
+                            data["tempBmsMin"]   = rt.get("3000")
+                            data["tempMosfet"]   = rt.get("2300")
+                            data["tempMax"]      = rt.get("1800")
+                            data["tempMin"]      = rt.get("2000")
+                            data["temp"]         = rt.get("1800")
+                            data["alarmStatus1"] = rt.get("3200")
+                            data["alarmStatus2"] = rt.get("3300")
+                            data["alarmTotal"]   = rt.get("4100")
+                            bal_g2 = rt.get("3100")
+                            if bal_g2 is not None:
+                                data["balancingStatus"] = str(bal_g2) != "0"
+                            vmax_g2 = _to_float(rt.get("1300"))
+                            vmin_g2 = _to_float(rt.get("1500"))
+                            if vmax_g2 is not None and vmax_g2 > 0:
+                                data["cellVoltageMax"] = vmax_g2
+                            if vmin_g2 is not None and vmin_g2 > 0:
+                                data["cellVoltageMin"] = vmin_g2
+                            if vmax_g2 is not None and vmin_g2 is not None and vmax_g2 > 0 and vmin_g2 > 0:
+                                data["cellVoltageDiffMv"] = round((vmax_g2 - vmin_g2) * 1000, 1)
+                            data["cellVoltageMaxModule"] = rt.get("1401")
+                            data["cellVoltageMaxCell"]   = rt.get("1402")
+                            data["cellVoltageMinModule"] = rt.get("1601")
+                            data["cellVoltageMinCell"]   = rt.get("1602")
+                            cv = _to_float(rt.get("3600"))
+                            dv = _to_float(rt.get("3700"))
+                            cl = _to_float(rt.get("3800"))
+                            dl = _to_float(rt.get("3900"))
+                            if cv is not None and cv > 0:
+                                data["chargeVoltageLimit"]    = cv
+                            if dv is not None and dv > 0:
+                                data["dischargeVoltageLimit"] = dv
+                            if cl is not None:
+                                data["chargeCurrentLimit"]    = cl
+                            if dl is not None and dl > 0:
+                                data["dischargeCurrentLimit"] = dl
 
-                        # Kapazität
+                        else:
+                            # ── Variante B: 10xxx-Serie — identisch PowerBrick SC/Plus ──
+                            data["packVoltage"] = rt.get("13500") if rt.get("13500") is not None else data.get("packVoltage")
+                            if rt.get("13400") is not None:
+                                data["realTimeCurrent"] = rt.get("13400")
+                            data["cycleCount"] = rt.get("13900")
+                            bms_temp = _to_float(rt.get("12400"))
+                            if bms_temp is not None:
+                                data["tempBmsMax"] = bms_temp
+                            cell_temps_g2b = [
+                                _to_float(rt.get(str(12500 + i * 100)))
+                                for i in range(4)
+                            ]
+                            valid_g2b = [t for t in cell_temps_g2b if t is not None and t > 0]
+                            if valid_g2b:
+                                data["tempMax"] = max(valid_g2b)
+                                data["tempMin"] = min(valid_g2b) if len(valid_g2b) > 1 else None
+                            cells_g2b = []
+                            for i in range(1, 17):
+                                v = _to_float(rt.get(str(10200 + i * 100)))
+                                if v is not None and v > 0:
+                                    cells_g2b.append(v)
+                                    data[f"cellVoltage{i:02d}"] = v
+                            if cells_g2b:
+                                data["cellVoltageMax"]    = max(cells_g2b)
+                                data["cellVoltageMin"]    = min(cells_g2b)
+                                data["cellVoltageDiffMv"] = round((max(cells_g2b) - min(cells_g2b)) * 1000, 1)
+                            cv = _to_float(rt.get("18700"))
+                            dv = _to_float(rt.get("18800"))
+                            cl = _to_float(rt.get("18600"))
+                            dl = _to_float(rt.get("19200"))
+                            if cv is not None and cv > 0:
+                                data["chargeVoltageLimit"]    = cv
+                            if dv is not None and dv > 0:
+                                data["dischargeVoltageLimit"] = dv
+                            if cl is not None and cl > 0:
+                                data["chargeCurrentLimit"]    = cl
+                            if dl is not None and dl > 0:
+                                data["dischargeCurrentLimit"] = dl
+
+                        # Kapazität (beide Varianten)
                         bc  = _to_float(data.get("batteryCapacity"))
                         soc = _to_float(data.get("soc"))
                         soh = _to_float(data.get("soh"))
@@ -973,27 +1030,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["usableKwh"]    = round(bc * soh_factor, 3)
                             data["remainingKwh"] = round(bc * soh_factor * soc / 100, 3)
 
-                        # Strom- und Spannungslimits (Standard-Points wie Junior Box)
-                        cv = _to_float(rt.get("3600"))
-                        dv = _to_float(rt.get("3700"))
-                        cl = _to_float(rt.get("3800"))
-                        dl = _to_float(rt.get("3900"))
-                        if cv is not None and cv > 0:
-                            data["chargeVoltageLimit"]    = cv
-                        if dv is not None and dv > 0:
-                            data["dischargeVoltageLimit"] = dv
-                        if cl is not None:
-                            data["chargeCurrentLimit"]    = cl
-                        if dl is not None and dl > 0:
-                            data["dischargeCurrentLimit"] = dl
-
                         _LOGGER.debug(
-                            "Dyness PowerBox G2: packVoltage=%s V, SOC=%s%%, "
-                            "tempMax=%s°C, cellMax=%s V, cellMin=%s V",
+                            "Dyness PowerBox G2 (Variante %s): packVoltage=%s V, SOC=%s%%, "
+                            "current=%s A, tempMax=%s°C, cellMax=%s V, cellMin=%s V",
+                            "A" if _g2_var_a else "B",
                             data.get("packVoltage"), soc,
                             data.get("realTimeCurrent"), data.get("tempMax"),
                             data.get("cellVoltageMax"), data.get("cellVoltageMin"),
-                            data.get("balancingStatus"),
                         )
 
                     elif schema == SCHEMA_POWERDEPOT:

@@ -199,6 +199,54 @@
       "module_cell_30": {
         "name": "Cell 30"
       },
+      "cell_voltage_01": {
+        "name": "Cell 01"
+      },
+      "cell_voltage_02": {
+        "name": "Cell 02"
+      },
+      "cell_voltage_03": {
+        "name": "Cell 03"
+      },
+      "cell_voltage_04": {
+        "name": "Cell 04"
+      },
+      "cell_voltage_05": {
+        "name": "Cell 05"
+      },
+      "cell_voltage_06": {
+        "name": "Cell 06"
+      },
+      "cell_voltage_07": {
+        "name": "Cell 07"
+      },
+      "cell_voltage_08": {
+        "name": "Cell 08"
+      },
+      "cell_voltage_09": {
+        "name": "Cell 09"
+      },
+      "cell_voltage_10": {
+        "name": "Cell 10"
+      },
+      "cell_voltage_11": {
+        "name": "Cell 11"
+      },
+      "cell_voltage_12": {
+        "name": "Cell 12"
+      },
+      "cell_voltage_13": {
+        "name": "Cell 13"
+      },
+      "cell_voltage_14": {
+        "name": "Cell 14"
+      },
+      "cell_voltage_15": {
+        "name": "Cell 15"
+      },
+      "cell_voltage_16": {
+        "name": "Cell 16"
+      },
       "alarm_total_tower": {
         "name": "Alarm Status"
       },
