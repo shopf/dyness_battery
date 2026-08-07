@@ -7,6 +7,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers import device_registry as dr
 
 from . import DOMAIN
 
@@ -117,7 +118,6 @@ ALWAYS_REGISTER = {
 
 # Alarm-Sensoren die nur für bestimmte Schemas implementiert sind.
 # Für alle anderen Schemas werden diese Entities gar nicht registriert
-# → kein dauerhaftes Unavailable mehr.
 _ALARM_SENSOR_KEYS = {
     "alarmSpreadV", "alarmSpreadT", "alarmInsul",
     "alarmAfe", "alarmBms", "alarmSys", "alarmTotal",
@@ -143,14 +143,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     schema = available_data.get("_schema", "unknown")
 
     # Pack-Level Sensoren — schema-basiert filtern
-    #
-    # WICHTIG (Issue #29): available_data ist nur der Snapshot beim Plattform-Setup.
-    # Lieferte das allererste Update für einen optionalen Sensor (z.B. wegen
-    # Rate-Limiting auf einem Sub-Modul-Call) keinen Wert, wurde die Entity früher
-    # NIE registriert — auch wenn spätere Updates den Wert zuverlässig lieferten.
-    # Das betraf u.a. chargeCurrentLimit, alarmStatus1/2, cycleCount auf Master.
-    # Lösung: wie bei den Modul-Sensoren ein Listener, der bei jedem Update prüft,
-    # ob bisher unregistrierte Pack-Sensoren inzwischen einen Wert haben.
     known_pack_keys: set = set()
 
     def _pack_sensor_allowed(key: str, data: dict) -> bool:
@@ -186,10 +178,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     known_module_ids: set = set()
     _registry_scanned: bool = False
 
-    # Sensoren die beim Tower Pro TP7 auf Modul-Ebene nicht verfügbar sind
+    # Sensoren die beim Tower Pro TP7 und Stack100 auf Modul-Ebene nicht verfügbar sind
     _TP7_MODULE_SKIP     = {'soc', 'soh', 'voltage', 'current', 'cycle_count', 'bms_temp', 'has_alarm'}
-    # Stack100 Sub-Module liefern SOC, SOH, Spannung, Strom, Zyklen nur auf BMS-Master-Ebene.
-    # Auf Sub-Modul-Ebene sind diese Werte nie vorhanden → Sensoren gar nicht erst anlegen.
     _STACK100_MODULE_SKIP = {'soc', 'soh', 'voltage', 'current', 'cycle_count', 'bms_temp', 'has_alarm'}
 
     def _add_new_modules() -> None:
@@ -198,17 +188,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         if not module_data:
             return
 
-        # Beim ersten Aufruf: Registry-Scan.
-        #
-        # WICHTIG: known_module_ids verhindert doppelte Registrierung innerhalb
-        # einer Session. Nach einem HA-Restart muss async_add_entities jedoch
-        # erneut aufgerufen werden — auch für bereits bekannte Module — damit HA
-        # die Entities mit dem Coordinator verknüpft. HA verhindert echte Duplikate
-        # intern über die unique_id (bestehender Registry-Eintrag wird wiederverwendet).
-        #
-        # Deshalb: beim ersten Scan known_module_ids NICHT mit Registry-IDs befüllen.
-        # Stattdessen alle Module in module_data als "neu" behandeln → instanziieren.
-        # Ab dem zweiten Aufruf verhindert known_module_ids echte Duplikate.
+        # Beim ersten Aufruf: Registry-Scan
         if not _registry_scanned:
             _registry_scanned = True
             _er = er.async_get(hass)
@@ -222,8 +202,21 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 "Dyness: Registry-Scan: %d Modul(e) bereits bekannt: %s",
                 len(registry_mids), registry_mids or "leer (Neuinstallation)"
             )
-            # known_module_ids leer lassen → alle Module werden instanziiert
-            # HA verknüpft bestehende Registry-Einträge über unique_id automatisch
+            # Verwaiste Modul-Devices bereinigen (z.B. nach Firmware-Update)
+            _dr = dr.async_get(hass)
+            current_mids = set(module_data.keys())
+            for device in dr.async_entries_for_config_entry(_dr, entry.entry_id):
+                for domain, dev_id in device.identifiers:
+                    if domain == DOMAIN and "_" in dev_id:
+                        # Modul-Device: Format "{device_sn}_{module_id}"
+                        mid_candidate = dev_id.split("_", 1)[1]
+                        if mid_candidate and mid_candidate not in current_mids:
+                            _LOGGER.info(
+                                "Dyness: Verwaistes Modul-Device entfernt: %s "
+                                "(nicht mehr in module_data)", dev_id
+                            )
+                            _dr.async_remove_device(device.id)
+                            break
 
         new_mids = [mid for mid in module_data if mid not in known_module_ids]
         if not new_mids:
@@ -245,15 +238,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         unit, dev_cls, state_cls, icon, precision,
                     )
                 )
-            # Individuelle Zellspannungen — nur für vorhandene Zellen registrieren
-            # Stack100 liefert Zellen 17–30 mit pointValue="0.0" (nicht null).
-            # Daher reicht `is not None` nicht — explizit 0.0 ausschließen.
-            # Für Stack100: Point 11100 = physische Zellanzahl → nur bis dort registrieren.
-            # Für alle anderen Schemas: Wert muss vorhanden und > 0 sein.
+            # Individuelle Zellspannungen
             is_stack100_mod = mod.get("module_number") is not None and not mod.get("is_tp7")
             phys_cells = int(mod.get("cell_count", 30)) if not is_stack100_mod else int(mod.get("cell_count", 16))
             for data_key, trans_key, unit, dev_cls, state_cls, icon, precision in _CELL_SENSORS:
-                # Zellnummer aus data_key extrahieren (z.B. "cell_17" → 17)
+                # Zellnummer aus data_key extrahieren
                 try:
                     cell_num = int(data_key.split("_")[1])
                 except (IndexError, ValueError):
@@ -327,10 +316,10 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.last_update_success and self.native_value is not None
 
 
-# ── Modul-Sensoren (pro Sub-Modul dynamisch registriert) ─────────────────────
+# Modul-Sensoren (pro Sub-Modul dynamisch registriert)
 # (data_key, translation_key, unit, device_class, state_class, icon, precision)
 
-# Individuelle Zellspannungs-Sensoren (standardmäßig deaktiviert — in HA UI aktivierbar)
+# Individuelle Zellspannungs-Sensoren
 _CELL_SENSORS = [
     (f"cell_{i:02d}", f"module_cell_{i:02d}",
      UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,

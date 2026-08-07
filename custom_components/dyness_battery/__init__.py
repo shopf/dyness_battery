@@ -93,6 +93,7 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "POWERHAUS":        SCHEMA_POWERBOX_PRO,   # modelCode 145
     # PowerDepot G2
     "POWERDEPOT-G2":    SCHEMA_POWERDEPOT,   # modelCode 144
+    "POWERDEPOT-H5B":   SCHEMA_POWERDEPOT,   # modelCode 21
     # PowerBrick Familie
     "POWERBRICK-PRO":   SCHEMA_POWERBRICK,
     "POWERBRICK-SC":    SCHEMA_POWERBRICK_SC,   # modelCode 226
@@ -933,6 +934,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 data["soc"] = rt.get("800")
                             if rt.get("700") is not None:
                                 data["realTimeCurrent"] = rt.get("700")
+                            # realTimePower aus V×I — verhindert stale-Wert aus getLastPowerDataBySn
+                            _v_g2 = _to_float(rt.get("600"))
+                            _i_g2 = _to_float(rt.get("700"))
+                            if _v_g2 is not None and _i_g2 is not None:
+                                data["realTimePower"] = round(_v_g2 * _i_g2, 1)
+                            if _i_g2 is not None:
+                                if _i_g2 > 1.0:
+                                    data["workStatus"] = "Charging"
+                                elif _i_g2 < -1.0:
+                                    data["workStatus"] = "Discharging"
+                                else:
+                                    data["workStatus"] = "Standby"
                             data["soh"]          = rt.get("1200")
                             data["tempBmsMax"]   = rt.get("2800")
                             data["tempBmsMin"]   = rt.get("3000")
@@ -943,9 +956,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmStatus1"] = rt.get("3200")
                             data["alarmStatus2"] = rt.get("3300")
                             data["alarmTotal"]   = rt.get("4100")
-                            bal_g2 = rt.get("3100")
-                            if bal_g2 is not None:
-                                data["balancingStatus"] = str(bal_g2) != "0"
                             vmax_g2 = _to_float(rt.get("1300"))
                             vmin_g2 = _to_float(rt.get("1500"))
                             if vmax_g2 is not None and vmax_g2 > 0:
@@ -1035,9 +1045,18 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # batteryCapacity ZUERST setzen damit usableKwh korrekt rechnet
                         n_mod_bms = _to_float(rt.get("400"))
                         if n_mod_bms is not None and n_mod_bms > 0:
-                            bc_single = _to_float(self.station_info.get("batteryCapacity"))
-                            if bc_single is not None:
-                                data["batteryCapacity"] = round(bc_single * int(n_mod_bms), 3)
+                            bc_raw = _to_float(self.station_info.get("batteryCapacity"))
+                            if bc_raw is not None:
+                                # station/info.batteryCapacity kann mehrere BMS-Einträge umfassen
+                                # (z.B. H5B: 2 BMS × 5.12 kWh = 10.24, aber Point 400 = 3 Module)
+                                # → pro Modul normieren, dann × tatsächliche Modulanzahl
+                                bms_n = max(self._storage_list_bms_count, 1)
+                                bc_per_mod = bc_raw / bms_n
+                                data["batteryCapacity"] = round(bc_per_mod * int(n_mod_bms), 3)
+                                _LOGGER.debug(
+                                    "Dyness PowerDepot: batteryCapacity %s / %d BMS × %d Module = %s kWh",
+                                    bc_raw, bms_n, int(n_mod_bms), data["batteryCapacity"]
+                                )
                         elif data.get("batteryCapacity") is None:
                             # Fallback: _module_sns Anzahl wenn Point 400 leer
                             bc_single = _to_float(self.station_info.get("batteryCapacity"))
