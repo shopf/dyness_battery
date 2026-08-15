@@ -7,7 +7,6 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers import device_registry as dr
 
 from . import DOMAIN
 
@@ -202,21 +201,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 "Dyness: Registry-Scan: %d Modul(e) bereits bekannt: %s",
                 len(registry_mids), registry_mids or "leer (Neuinstallation)"
             )
-            # Verwaiste Modul-Devices bereinigen (z.B. nach Firmware-Update)
-            _dr = dr.async_get(hass)
-            current_mids = set(module_data.keys())
-            for device in dr.async_entries_for_config_entry(_dr, entry.entry_id):
-                for domain, dev_id in device.identifiers:
-                    if domain == DOMAIN and "_" in dev_id:
-                        # Modul-Device: Format "{device_sn}_{module_id}"
-                        mid_candidate = dev_id.split("_", 1)[1]
-                        if mid_candidate and mid_candidate not in current_mids:
-                            _LOGGER.info(
-                                "Dyness: Verwaistes Modul-Device entfernt: %s "
-                                "(nicht mehr in module_data)", dev_id
-                            )
-                            _dr.async_remove_device(device.id)
-                            break
 
         new_mids = [mid for mid in module_data if mid not in known_module_ids]
         if not new_mids:

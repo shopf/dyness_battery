@@ -464,7 +464,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                         self._storage_list_total, self._storage_list_bms_count
                                     )
                         except Exception as e:
-                            _LOGGER.warning("Dyness storage/list nicht erreichbar: %s", e)
+                            err_msg = str(e)
+                            if "Expecting value" in err_msg or "char 0" in err_msg:
+                                _LOGGER.warning(
+                                    "Dyness storage/list: Leere oder ungültige Antwort vom Server "
+                                    "(vermutlich temporäre Serverunterbrechung)"
+                                )
+                            else:
+                                _LOGGER.warning("Dyness storage/list: Fehler beim Abrufen: %s", e)
 
                     # ── realTime/data BMS (bei jedem Update) ──────────────────
                     try:
@@ -1066,6 +1073,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                         data["packVoltage"] = rt.get("600") if rt.get("600") is not None else data.get("packVoltage")
                         data["realTimeCurrent"]      = rt.get("700")
+                        # realTimePower aus V×I — verhindert stale-Wert aus getLastPowerDataBySn
+                        _v_pd = _to_float(rt.get("600"))
+                        _i_pd = _to_float(rt.get("700"))
+                        if _v_pd is not None and _i_pd is not None:
+                            data["realTimePower"] = round(_v_pd * _i_pd, 1)
                         data["soc"]                  = rt.get("800")
                         data["soh"]                  = rt.get("1200")
                         data["cellVoltageMax"]       = rt.get("1300")
@@ -1105,6 +1117,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # Alarm Status 1/2 (Points 3200/3300)
                         data["alarmStatus1"] = rt.get("3200")
                         data["alarmStatus2"] = rt.get("3300")
+                        data["alarmStatus"]  = (
+                            str(rt.get("3200") or "0") != "0"
+                            or str(rt.get("3300") or "0") != "0"
+                        )
 
                         # Kapazität aus BMS-Modulanzahl
                         bc  = _to_float(data.get("batteryCapacity"))
@@ -1787,7 +1803,8 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     #   systematisch (z.B. 3.5 kWh statt 10.24 kWh). batteryCapacity × SOC zuverlässiger.
                     # Alle anderen: Strategie 1 (Ah) wenn verfügbar, sonst SOC-Fallback.
                     if schema not in (SCHEMA_STACK100, SCHEMA_POWERDEPOT, SCHEMA_POWERBOX_G2,
-                                      SCHEMA_POWERBRICK, SCHEMA_POWERBRICK_SC):
+                                      SCHEMA_POWERBRICK, SCHEMA_POWERBRICK_SC,
+                                      SCHEMA_POWERBOX_PRO):
                         try:
                             mod_data = data.get("module_data", {})
                             total_remain_kwh = 0.0
