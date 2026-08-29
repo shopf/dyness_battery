@@ -113,7 +113,7 @@
         "name": "Tension Cellule Max"
       },
       "module_cell_v_min": {
-        "name": "Tension Cellule Max"
+        "name": "Tension Cellule Min"
       },
       "module_cell_spread": {
         "name": "Différence de tension"
@@ -296,7 +296,7 @@
         "name": "Statut Alarme"
       },
       "pv_power": {
-        "name": "PV Power"
+        "name": "Puissance PV"
       },
       "pv_voltage": {
         "name": "Tension PV"
@@ -305,127 +305,127 @@
         "name": "Courant PV"
       },
       "out_energy_today": {
-        "name": "Énergie de sortie PV aujourd'hui"
+        "name": "Energie de sortie PV aujourd'hui"
       },
       "out_energy_total": {
-        "name": "Énergie de sortie PV totale"
+        "name": "Energie de sortie PV totale"
       },
       "load_power": {
-        "name": "Load Power"
+        "name": "Puissance de charge"
       },
       "grid_power": {
-        "name": "Grid Power"
+        "name": "Puissance réseau"
       },
       "pv1_power": {
-        "name": "PV String 1 Power"
+        "name": "Puissance PV String 1"
       },
       "pv2_power": {
-        "name": "PV String 2 Power"
+        "name": "Puissance PV String 2"
       },
       "pv3_power": {
-        "name": "PV String 3 Power"
+        "name": "Puissance PV String 3"
       },
       "pv_energy_today": {
-        "name": "Today PV Yield"
+        "name": "Production PV aujourd'hui"
       },
       "load_energy_today": {
-        "name": "Today Load Consumption"
+        "name": "Consommation aujourd'hui"
       },
       "grid_import_today": {
-        "name": "Today Grid Import"
+        "name": "Import réseau aujourd'hui"
       },
       "grid_export_today": {
-        "name": "Today Grid Export"
+        "name": "Export réseau aujourd'hui"
       },
       "pv_energy_total": {
-        "name": "Total PV Yield"
+        "name": "Production PV totale"
       },
       "load_energy_total": {
-        "name": "Total Load Consumption"
+        "name": "Consommation totale"
       },
       "grid_import_total": {
-        "name": "Total Grid Import"
+        "name": "Import réseau total"
       },
       "grid_export_total": {
-        "name": "Total Grid Export"
+        "name": "Export réseau total"
       },
       "temp_internal": {
-        "name": "Inverter Internal Temperature"
+        "name": "Température interne onduleur"
       },
       "temp_module": {
-        "name": "Inverter Module Temperature"
+        "name": "Température module onduleur"
       },
       "temp_heat_sink": {
-        "name": "Inverter Heat Sink Temperature"
+        "name": "Température dissipateur onduleur"
       },
       "grid_status": {
-        "name": "Grid Status"
+        "name": "Etat du réseau"
       },
       "run_model": {
-        "name": "Run Mode"
+        "name": "Mode de fonctionnement"
       },
       "inverter_work_status": {
-        "name": "Inverter Work Status"
+        "name": "Etat de fonctionnement onduleur"
       },
       "grid_voltage": {
-        "name": "Grid Voltage"
+        "name": "Tension réseau"
       },
       "grid_current": {
-        "name": "Grid Current"
+        "name": "Courant réseau"
       },
       "grid_frequency": {
-        "name": "Grid Frequency"
+        "name": "Fréquence réseau"
       },
       "bus_voltage": {
-        "name": "DC Bus Voltage"
+        "name": "Tension bus DC"
       },
       "pv1_voltage": {
-        "name": "PV String 1 Voltage"
+        "name": "Tension PV String 1"
       },
       "pv2_voltage": {
-        "name": "PV String 2 Voltage"
+        "name": "Tension PV String 2"
       },
       "pv3_voltage": {
-        "name": "PV String 3 Voltage"
+        "name": "Tension PV String 3"
       },
       "pv1_current": {
-        "name": "PV String 1 Current"
+        "name": "Courant PV String 1"
       },
       "pv2_current": {
-        "name": "PV String 2 Current"
+        "name": "Courant PV String 2"
       },
       "pv3_current": {
-        "name": "PV String 3 Current"
+        "name": "Courant PV String 3"
       },
       "alarm_text": {
-        "name": "Alarm Details"
+        "name": "Détails de l'alarme"
       },
       "charge_voltage_limit": {
-        "name": "Charge Voltage Limit"
+        "name": "Limite de tension de charge"
       },
       "discharge_voltage_limit": {
-        "name": "Discharge Voltage Limit"
+        "name": "Limite de tension de décharge"
       },
       "cell_v_max_module": {
-        "name": "Cell Voltage Max Module"
+        "name": "Module tension cellule Max"
       },
       "cell_v_max_cell": {
-        "name": "Cell Voltage Max Cell"
+        "name": "Cellule tension Max"
       },
       "cell_v_min_module": {
-        "name": "Cell Voltage Min Module"
+        "name": "Module tension cellule Min"
       },
       "cell_v_min_cell": {
-        "name": "Cell Voltage Min Cell"
+        "name": "Cellule tension Min"
       },
       "balancing_status": {
-        "name": "Balancing Status"
+        "name": "Etat d'équilibrage"
       },
       "installed_power": {
-        "name": "Installed PV Power"
+        "name": "Puissance PV installée"
       },
       "data_update_time": {
-        "name": "Data Timestamp"
+        "name": "Horodatage des données"
       }
     }
   },
@@ -470,12 +470,17 @@
         "title": "Dyness Battery – Options",
         "description": "Configurer le comportement de l'intégration.",
         "data": {
-          "alarm_delay_minutes": "Délai de notification d'alarme"
+          "alarm_delay_minutes": "Délai de notification d'alarme",
+          "battery_capacity_override": "Remplacement capacité (kWh)"
         },
         "data_description": {
-          "alarm_delay_minutes": "Durée minimale pendant laquelle une alarme doit être active avant qu'une notification Home Assistant soit déclenchée. Évite les notifications pour des événements transitoires (ex. alarme d'équilibrage à 100% SOC)."
+          "alarm_delay_minutes": "Durée minimale pendant laquelle une alarme doit être active avant qu'une notification Home Assistant soit déclenchée. Évite les notifications pour des événements transitoires (ex. alarme d'équilibrage à 100% SOC).",
+          "battery_capacity_override": "Optionnel. Entrez la capacité totale de la batterie en kWh pour remplacer la valeur calculée par l'API. Laisser vide pour le calcul automatique."
         }
       }
+    },
+    "error": {
+      "invalid_capacity": "Veuillez entrer un nombre positif (ex. 20.48) ou laisser vide."
     }
   }
 }

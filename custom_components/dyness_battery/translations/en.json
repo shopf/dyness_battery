@@ -470,12 +470,17 @@
         "title": "Dyness Battery – Options",
         "description": "Configure integration behaviour.",
         "data": {
-          "alarm_delay_minutes": "Alarm notification delay"
+          "alarm_delay_minutes": "Alarm notification delay",
+          "battery_capacity_override": "Battery Capacity Override (kWh)"
         },
         "data_description": {
-          "alarm_delay_minutes": "Minimum duration an alarm must be active before a Home Assistant notification is triggered. Use this to suppress transient events (e.g. balancing alarms at 100% SOC)."
+          "alarm_delay_minutes": "Minimum duration an alarm must be active before a Home Assistant notification is triggered. Use this to suppress transient events (e.g. balancing alarms at 100% SOC).",
+          "battery_capacity_override": "Optional. Enter the total physical battery capacity in kWh to override the API-calculated value. Leave empty for automatic calculation."
         }
       }
+    },
+    "error": {
+      "invalid_capacity": "Please enter a positive number (e.g. 20.48) or leave empty."
     }
   }
 }

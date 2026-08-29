@@ -80,19 +80,51 @@ class DynessOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
+            cap_raw = str(user_input.get("battery_capacity_override", "")).strip()
+            if cap_raw:
+                try:
+                    cap_val = float(cap_raw.replace(",", "."))
+                    if cap_val <= 0:
+                        raise ValueError
+                except ValueError:
+                    return self.async_show_form(
+                        step_id="init",
+                        data_schema=self._build_schema(user_input),
+                        errors={"battery_capacity_override": "invalid_capacity"},
+                    )
+            # Integration neu laden, damit neue Optionen sofort wirksam werden
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            )
             return self.async_create_entry(title="", data=user_input)
 
-        # Gespeicherter Wert immer als String — HA serialisiert Form-Werte als str
-        current_delay = str(self.config_entry.options.get("alarm_delay_minutes", "0"))
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(
-                    "alarm_delay_minutes",
-                    default=current_delay,
-                ): vol.In(ALARM_DELAY_OPTIONS),
-            }),
+            data_schema=self._build_schema(),
         )
+
+    def _build_schema(self, prefill=None):
+        prefill = prefill or {}
+        current_delay = str(
+            prefill.get("alarm_delay_minutes")
+            or self.config_entry.options.get("alarm_delay_minutes", "0")
+        )
+        current_cap = str(
+            prefill.get("battery_capacity_override", "")
+            or self.config_entry.options.get("battery_capacity_override", "")
+        )
+        return vol.Schema({
+            vol.Required(
+                "alarm_delay_minutes",
+                default=current_delay,
+            ): vol.In(ALARM_DELAY_OPTIONS),
+            # suggested_value zeigt aktuellen Wert an, erzwingt ihn aber nicht —
+            # damit kann der User das Feld leeren (leerer String = kein Override)
+            vol.Optional(
+                "battery_capacity_override",
+                description={"suggested_value": current_cap},
+            ): str,
+        })
 
 
 STEP_USER_DATA_SCHEMA = vol.Schema({

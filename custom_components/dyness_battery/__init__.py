@@ -1086,6 +1086,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         data["cellVoltageMin"]       = rt.get("1500")
                         data["cellVoltageMinModule"] = rt.get("1601")
                         data["cellVoltageMinCell"]   = rt.get("1602")
+                        data["temp"]                 = rt.get("1800")
                         data["tempMax"]              = rt.get("1800")
                         data["tempMaxModule"]        = rt.get("1901")
                         data["tempMin"]              = rt.get("2000")
@@ -1789,6 +1790,22 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     n_modules = max(len(self._module_sns), 1)
                     data["module_data"]  = self.module_data
                     data["moduleCount"]  = len(self._module_sns)
+
+                    # ── Kapazitäts-Override aus Benutzereinstellungen ────────
+                    _cap_override_raw = str(
+                        self.config_entry.options.get("battery_capacity_override", "") or ""
+                    ).strip()
+                    if _cap_override_raw:
+                        try:
+                            _cap_override = float(_cap_override_raw.replace(",", "."))
+                            if _cap_override > 0:
+                                _LOGGER.debug(
+                                    "Dyness: batteryCapacity Override: %s kWh (Benutzer)",
+                                    _cap_override,
+                                )
+                                data["batteryCapacity"] = _cap_override
+                        except ValueError:
+                            pass
 
                     # ── usableKwh / remainingKwh Berechnung ──────────────────
                     # Stack100: bereits via Point 1600/1700 gesetzt → überspringen.
