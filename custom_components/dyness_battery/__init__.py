@@ -333,7 +333,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 "data": None, "info": "TOO_MANY_REQUESTS"}
                     raw_text = await response.text()
                     _LOGGER.debug("Dyness %s: %s", path, raw_text)
-                    return json.loads(raw_text)
+                    try:
+                        return json.loads(raw_text)
+                    except json.JSONDecodeError:
+                        # Leere oder ungültige Antwort (z.B. Serverausfall)
+                        raise aiohttp.ClientError(
+                            f"Leere oder ungültige Antwort von {path} "
+                            f"(vermutlich temporäre Serverunterbrechung)"
+                        )
             except aiohttp.ClientError as e:
                 _LOGGER.warning("Dyness %s Verbindungsfehler (Versuch %d/%d): %s",
                                 path, attempt + 1, max_retries + 1, e)
@@ -1252,11 +1259,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmInsul"]   = str(rt.get("3205", "0")) != "0"
                             data["alarmAfe"]     = str(rt.get("3203", "0")) != "0"
                             data["alarmBms"]     = str(rt.get("3204", "0")) != "0"
-                            data["alarmSys"]     = (
-                                str(rt.get("3206", "0")) != "0"
-                                or str(rt.get("3207", "0")) != "0"
-                                or str(rt.get("3208", "0")) != "0"
-                            )
+                            # Point 4100 = total alarm status (primäre Alarmquelle).
+                            # Points 3206/3207/3208 sind Top-Charge-Warnflags (kein echter Fehler)
+                            data["alarmSys"]     = str(rt.get("4100", "0")) != "0"
                             cc_pb = rt.get("900")
                             if cc_pb is not None and str(cc_pb).strip() not in ("", "0"):
                                 data["cycleCount"] = cc_pb
@@ -1361,6 +1366,67 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     data[f"cellVoltage{i:02d}"] = v
                             if cells_pb:
                                 data["cellVoltageDiffMv"] = round((max(cells_pb) - min(cells_pb)) * 1000, 1)
+
+                            # Single-Sub-Modul-Poll: Falls Master-Points 10300-11800 leer
+                            # und genau ein Sub-Modul bekannt → Sub-Modul direkt abfragen und
+                            # Zellspannungen + Temps auf Hauptdevice mappen (kein separates Device).
+                            if not cells_pb and len(self._module_sns) == 1:
+                                _sub_sn = self._module_sns[0]
+                                _LOGGER.debug(
+                                    "Dyness PowerBrick: Keine Zellen vom Master — "
+                                    "frage Sub-Modul %s direkt ab", _sub_sn
+                                )
+                                try:
+                                    _sub_rt_res = await self._call(
+                                        session, "/v1/device/realTime/data",
+                                        {"deviceSn": _sub_sn}
+                                    )
+                                    if _is_success(_sub_rt_res):
+                                        _sub_pts = {
+                                            p["pointId"]: p.get("pointValue", "")
+                                            for p in (_sub_rt_res.get("data") or [])
+                                            if p.get("pointId")
+                                        }
+                                        _sub_cells = []
+                                        for i in range(1, 17):
+                                            v = _to_float(_sub_pts.get(str(10200 + i * 100)))
+                                            if v is not None and v > 0:
+                                                _sub_cells.append(v)
+                                                data[f"cellVoltage{i:02d}"] = v
+                                        if _sub_cells:
+                                            data["cellVoltageMax"]    = max(_sub_cells)
+                                            data["cellVoltageMin"]    = min(_sub_cells)
+                                            data["cellVoltageDiffMv"] = round(
+                                                (max(_sub_cells) - min(_sub_cells)) * 1000, 1
+                                            )
+                                        # Temperaturen aus Sub-Modul
+                                        _bms_t = _to_float(_sub_pts.get("12400"))
+                                        if _bms_t is not None:
+                                            data["tempBmsMax"] = _bms_t
+                                        _cell_temps = [
+                                            _to_float(_sub_pts.get(str(12500 + j * 100)))
+                                            for j in range(4)
+                                        ]
+                                        _valid_t = [t for t in _cell_temps if t is not None and t > 0]
+                                        if _valid_t:
+                                            data["tempMax"] = max(_valid_t)
+                                            data["tempMin"] = min(_valid_t) if len(_valid_t) > 1 else data.get("tempMin")
+                                        # Zyklenanzahl aus Sub-Modul falls Master leer
+                                        if data.get("cycleCount") is None:
+                                            _cc = _sub_pts.get("13900")
+                                            if _cc:
+                                                data["cycleCount"] = _cc
+                                        _LOGGER.debug(
+                                            "Dyness PowerBrick Sub-Modul %s: %d Zellen, "
+                                            "tempBmsMax=%s°C",
+                                            _sub_sn, len(_sub_cells),
+                                            data.get("tempBmsMax"),
+                                        )
+                                except Exception as _e_sub:
+                                    _LOGGER.debug(
+                                        "Dyness PowerBrick: Sub-Modul-Abruf fehlgeschlagen: %s",
+                                        _e_sub
+                                    )
 
                         # Kapazitätsberechnung (beide Varianten)
                         bc_val = _to_float(data.get("batteryCapacity"))
