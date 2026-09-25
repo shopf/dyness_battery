@@ -19,7 +19,7 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 |-------|--------|
 | Dyness Cygni 10.0HS | ✅ Getestet |
 | Dyness DL5.0C | ✅ Getestet |
-| Dyness Junior Box | ✅ Getestet |
+| Dyness Junior Box | ✅ Getestet + Steuerung möglich |
 | Dyness Powerbox G2 / Pro | ✅ Getestet |
 | Dyness PowerBrick / Plus / PRO / SC | ✅ Getestet |
 | Dyness PowerDepot G2 / H5B | ✅ Getestet |
@@ -172,7 +172,7 @@ Du hast ein anderes Dyness-Modell und möchtest es hinzufügen lassen? Erstelle 
 |--------|--------|
 | Dyness Cygni 10.0HS | ✅ Tested |
 | Dyness DL5.0C | ✅ Tested |
-| Dyness Junior Box | ✅ Tested |
+| Dyness Junior Box | ✅ Tested + controllable |
 | Dyness Powerbox G2 / Pro | ✅ Tested |
 | Dyness PowerBrick / Plus / PRO / SC | ✅ Tested |
 | Dyness PowerDepot G2 / H5B | ✅ Tested |
@@ -338,10 +338,17 @@ Endpoints used:
 
 ---
 
-## Translations
+## Languages
 
-Additional languages supported:
-1. 🇫🇷 French — contributed by the community
+| Language | Code | Status |
+|----------|------|--------|
+| German | `de` | ✅ Complete |
+| English | `en` | ✅ Complete |
+| French | `fr` | ✅ Complete |
+| Spanish | `es` | ✅ Complete |
+| Portuguese | `pt` | ✅ Complete |
+
+Want a new language or spotted a small translation error? Just open a [Discussion](https://github.com/shopf/dyness_battery/discussions) or submit a Pull Request directly – contributions are very welcome!
 
 ---
 

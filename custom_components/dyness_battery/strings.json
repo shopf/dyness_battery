@@ -427,6 +427,56 @@
       "pack_voltage": {
         "name": "Pack Voltage"
       }
+    },
+    "number": {
+      "base_power_limit": {
+        "name": "Power Limit"
+      },
+      "base_discharge_depth": {
+        "name": "Depth of Discharge (DOD)"
+      },
+      "group_power": {
+        "name": "Time Window {group} Power"
+      }
+    },
+    "select": {
+      "group_mode": {
+        "name": "Time Window {group} Mode",
+        "state": {
+          "load_priority": "Load Priority",
+          "battery_priority": "Battery Priority",
+          "shutdown": "Shutdown"
+        }
+      },
+      "group_week": {
+        "name": "Time Window {group} Weekdays",
+        "state": {
+          "all_days": "Every Day",
+          "weekdays": "Weekdays (Mon-Fri)",
+          "weekend": "Weekend (Sat-Sun)"
+        }
+      }
+    },
+    "switch": {
+      "write_enabled": {
+        "name": "Writing Enabled"
+      },
+      "group_enabled": {
+        "name": "Time Window {group} Active"
+      }
+    },
+    "time": {
+      "group_start": {
+        "name": "Window {group} Start"
+      },
+      "group_end": {
+        "name": "Window {group} End"
+      }
+    },
+    "button": {
+      "refresh_from_server": {
+        "name": "Fetch Current Server Data"
+      }
     }
   },
   "config": {

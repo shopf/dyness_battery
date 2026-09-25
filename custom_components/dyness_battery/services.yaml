@@ -1,0 +1,77 @@
+set_base_setting:
+  name: "Dyness: Basis-Einstellung setzen"
+  description: >
+    Setzt Betriebsmodus, Leistungsgrenze und Entladetiefe (POST /v2/SetBaseSetting).
+  fields:
+    config_entry_id:
+      name: Config Entry ID
+      description: >
+        Die Config-Entry-ID deiner Dyness-Integration
+        (Einstellungen > Geräte & Dienste > Dyness Battery > Gerät öffnen,
+        steht in der URL als entry_id-Parameter).
+      required: true
+      selector:
+        config_entry:
+          integration: dyness_battery
+    work_mode:
+      name: Betriebsmodus
+      description: "0=Eigenverbrauch, 1=Off-grid, 3=Economic, 6=Battery priority"
+      required: true
+      selector:
+        select:
+          options:
+            - label: "Eigenverbrauch (0)"
+              value: "0"
+            - label: "Off-grid (1)"
+              value: "1"
+            - label: "Economic (3)"
+              value: "3"
+            - label: "Battery priority (6)"
+              value: "6"
+    power_limit:
+      name: Leistungsgrenze
+      description: >
+        Limitierte Leistung in Watt. App-Limit: 152-800W, muss ein Vielfaches
+        von 8 sein (z.B. 152, 160, 168, ...).
+      required: true
+      selector:
+        number:
+          min: 152
+          max: 800
+          step: 8
+          unit_of_measurement: W
+          mode: box
+    discharge_depth:
+      name: Entladetiefe
+      description: Depth of Discharge in Prozent (App-Limit 20-100%).
+      required: true
+      selector:
+        number:
+          min: 20
+          max: 100
+          unit_of_measurement: "%"
+          mode: box
+
+set_work_schedule:
+  name: "Dyness: Zeitfenster-Gruppen setzen"
+  description: >
+    Setzt alle 4 Zeitfenster-Gruppen auf einmal (POST /v2/SetWorkModeSetting).
+  fields:
+    config_entry_id:
+      name: Config Entry ID
+      required: true
+      selector:
+        config_entry:
+          integration: dyness_battery
+    groups:
+      name: Gruppen
+      description: >
+        Liste von genau 4 Objekten mit den Schlüsseln:
+        batteryWorkGroup (1-4), state ("0"=Aus/"1"=An),
+        mode ("16"=Load Priority / "17"=Battery Priority / "255"=Shutdown),
+        startTime ("HH:mm"), endTime ("HH:mm"), power (0 = unkonfiguriert,
+        sonst 152-800W als Vielfaches von 8, z.B. 152/160/168/...),
+        week (z.B. "0,1,2,3,4,5,6" für alle Tage).
+      required: true
+      selector:
+        object:

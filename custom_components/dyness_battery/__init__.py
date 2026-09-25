@@ -5,7 +5,9 @@ import hmac
 import base64
 import json
 import logging
-import time
+import time as _time  # Alias zwingend nötig: das Paket enthält ein Submodul
+                        # 'time.py' (HA-Plattform 'time'), dessen Import sonst
+                        # den Namen 'time' im Paket-Namensraum überschreibt.
 from email.utils import formatdate
 from datetime import timedelta, datetime, timezone
 
@@ -15,12 +17,344 @@ import async_timeout
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.event import async_call_later
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.const import Platform
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "dyness_battery"
-PLATFORMS = [Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH,
+             Platform.TIME, Platform.BUTTON]
+
+# Schutzmechanismus fürs Schreiben (Control-Patch): verhindert, dass eine kaputte
+# Automation oder versehentliches Klicken den Dyness-Server mit Schreibanfragen
+# flutet. Betrifft NUR die Schreib-Methoden, nie den Lese-Poll-Zyklus.
+WRITE_MAX_CALLS = 6           # max. Schreibvorgänge...
+WRITE_WINDOW_SECONDS = 600    # ...innerhalb von 10 Minuten...
+WRITE_COOLDOWN_SECONDS = 900  # ...sonst 15 Minuten Sperre + Auto-Deaktivierung
+
+# Gültige workMode-Werte für /v2/SetBaseSetting laut Junior-Box-PDF.
+# WICHTIG: Punkt "6400" aus realTime/data liefert KEINEN Wert aus dieser Menge
+# (Praxistest zeigte "16") und wird daher NICHT verwendet
+# BESTÄTIGT WIRKUNGSLOS auf echter Junior-Box-Hardware (App<->HA Änderungen
+# in beide Richtungen ignoriert
+_FIXED_WORK_MODE = "3"  # wirkungsloser Platzhalter
+VALID_WORK_MODES = {"0", "1", "3", "6"}
+
+DOD_MIN = 20
+DOD_MAX = 100
+
+POWER_LIMIT_MIN = 152
+POWER_LIMIT_MAX = 800
+POWER_STEP = 8
+
+GROUP_POWER_MIN = 152
+GROUP_POWER_MAX = 800
+
+
+def _tou_group_valid(g: dict) -> tuple[bool, str | None, dict]:
+    """Prüft eine Zeitfenster-Gruppe auf Vollständigkeit/Plausibilität vor dem Senden.
+
+    Erlaubt: entweder komplett unkonfiguriert (power=0, start=end=00:00) ODER
+    vollständig gültig (power 152-800W als Vielfaches von 8, startTime !=
+    endTime, endTime nach startTime — kein Übernachtfenster über Mitternacht
+    hinweg erlaubt).
+
+    Rückgabe: (ok, reason_key, reason_kwargs) — reason_key ist ein Schlüssel
+    in _NOTIFY_REASONS für die mehrsprachige Anzeige
+    """
+    power = int(g.get("power", 0))
+    start = g.get("startTime", "00:00")
+    end = g.get("endTime", "00:00")
+
+    if power == 0 and start == "00:00" and end == "00:00":
+        return True, None, {}  # unkonfiguriert — erlaubt
+
+    if power == 0:
+        return False, "power_zero", {"min": GROUP_POWER_MIN}
+    if not (GROUP_POWER_MIN <= power <= GROUP_POWER_MAX):
+        return False, "power_range", {"min": GROUP_POWER_MIN, "max": GROUP_POWER_MAX}
+    if power % POWER_STEP != 0:
+        return False, "power_step", {"step": POWER_STEP, "min": GROUP_POWER_MIN, "next": GROUP_POWER_MIN + POWER_STEP}
+    if start == end:
+        return False, "start_eq_end", {}
+    if end <= start:
+        return False, "end_before_start", {}
+    return True, None, {}
+
+
+# ── Mehrsprachige Persistent Notifications ──────────────────────────────────
+# Der Text wird einmalig beim Erstellen festgelegt und gilt für alle Nutzer serverweit.
+_NOTIFY_FALLBACK_LANG = "en"
+
+_NOTIFY_REASONS = {
+    "power_zero": {
+        "de": "Leistung muss beim Konfigurieren > 0 sein (mind. {min}W)",
+        "en": "Power must be > 0 when configuring (min. {min}W)",
+        "es": "La potencia debe ser > 0 al configurar (mín. {min}W)",
+        "fr": "La puissance doit être > 0 lors de la configuration (min. {min}W)",
+        "pt": "A potência deve ser > 0 ao configurar (mín. {min}W)",
+    },
+    "power_range": {
+        "de": "Leistung muss zwischen {min}W und {max}W liegen",
+        "en": "Power must be between {min}W and {max}W",
+        "es": "La potencia debe estar entre {min}W y {max}W",
+        "fr": "La puissance doit être comprise entre {min}W et {max}W",
+        "pt": "A potência deve estar entre {min}W e {max}W",
+    },
+    "power_step": {
+        "de": "Leistung muss ein Vielfaches von {step}W sein (z.B. {min}, {next}, ...)",
+        "en": "Power must be a multiple of {step}W (e.g. {min}, {next}, ...)",
+        "es": "La potencia debe ser un múltiplo de {step}W (p. ej. {min}, {next}, ...)",
+        "fr": "La puissance doit être un multiple de {step}W (ex. {min}, {next}, ...)",
+        "pt": "A potência deve ser um múltiplo de {step}W (ex. {min}, {next}, ...)",
+    },
+    "start_eq_end": {
+        "de": "Start- und Endzeit dürfen nicht identisch sein",
+        "en": "Start and end time must not be identical",
+        "es": "La hora de inicio y fin no pueden ser iguales",
+        "fr": "Les heures de début et de fin ne peuvent pas être identiques",
+        "pt": "As horas de início e fim não podem ser iguais",
+    },
+    "end_before_start": {
+        "de": "Endzeit darf nicht vor der Startzeit liegen (kein Übernachtfenster)",
+        "en": "End time must not be before start time (no overnight window)",
+        "es": "La hora de fin no puede ser anterior a la de inicio (sin franja nocturna)",
+        "fr": "L'heure de fin ne doit pas précéder l'heure de début (pas de plage nocturne)",
+        "pt": "A hora de fim não pode ser anterior à de início (sem janela noturna)",
+    },
+    "overlap": {
+        "de": "Zeitfenster überschneidet sich mit Gruppe {other}",
+        "en": "Time window overlaps with group {other}",
+        "es": "La franja horaria se superpone con el grupo {other}",
+        "fr": "La plage horaire chevauche le groupe {other}",
+        "pt": "A janela horária sobrepõe-se ao grupo {other}",
+    },
+}
+
+_NOTIFY_TEXTS = {
+    "write_blocked": {
+        "de": {
+            "title": "Dyness Battery: Schreiben gesperrt",
+            "message": (
+                "Zu viele Schreibvorgänge in kurzer Zeit (≥ {max_calls} in {window_min} Min). "
+                "Schreiben ist jetzt für {cooldown_min} Minuten gesperrt und deaktiviert. "
+                "Bitte die auslösende Automation prüfen, danach switch.dyness_write_enabled "
+                "wieder einschalten."
+            ),
+        },
+        "en": {
+            "title": "Dyness Battery: Writing locked",
+            "message": (
+                "Too many write operations in a short time (≥ {max_calls} in {window_min} min). "
+                "Writing is now locked and disabled for {cooldown_min} minutes. "
+                "Please check the triggering automation, then turn "
+                "switch.dyness_write_enabled back on."
+            ),
+        },
+        "es": {
+            "title": "Dyness Battery: Escritura bloqueada",
+            "message": (
+                "Demasiadas escrituras en poco tiempo (≥ {max_calls} en {window_min} min). "
+                "La escritura está ahora bloqueada y desactivada durante {cooldown_min} minutos. "
+                "Revisa la automatización que lo provocó y luego vuelve a activar "
+                "switch.dyness_write_enabled."
+            ),
+        },
+        "fr": {
+            "title": "Dyness Battery: Écriture bloquée",
+            "message": (
+                "Trop d'écritures en peu de temps (≥ {max_calls} en {window_min} min). "
+                "L'écriture est désormais bloquée et désactivée pendant {cooldown_min} minutes. "
+                "Vérifiez l'automatisation à l'origine, puis réactivez "
+                "switch.dyness_write_enabled."
+            ),
+        },
+        "pt": {
+            "title": "Dyness Battery: Escrita bloqueada",
+            "message": (
+                "Muitas gravações em pouco tempo (≥ {max_calls} em {window_min} min). "
+                "A escrita está agora bloqueada e desativada por {cooldown_min} minutos. "
+                "Verifique a automação que causou isso e reative depois "
+                "switch.dyness_write_enabled."
+            ),
+        },
+    },
+    "tou_invalid": {
+        "de": {
+            "title": "Dyness Battery: Zeitfenster nicht gesendet",
+            "message": (
+                "Folgende Zeitfenster waren unvollständig/unplausibel und wurden NICHT "
+                "an Dyness gesendet: {details}. Bitte Werte korrigieren — beim nächsten "
+                "Lesepoll werden die betroffenen Gruppen auf den letzten bekannten "
+                "Gerätestand zurückgesetzt."
+            ),
+            "group_label": "Gruppe {group}",
+        },
+        "en": {
+            "title": "Dyness Battery: Time windows not sent",
+            "message": (
+                "The following time windows were incomplete/implausible and were NOT "
+                "sent to Dyness: {details}. Please correct the values — on the next "
+                "poll, the affected groups will be reset to the last known device state."
+            ),
+            "group_label": "Group {group}",
+        },
+        "es": {
+            "title": "Dyness Battery: Franjas horarias no enviadas",
+            "message": (
+                "Las siguientes franjas horarias estaban incompletas/no eran plausibles "
+                "y NO se enviaron a Dyness: {details}. Corrige los valores — en el "
+                "próximo sondeo, los grupos afectados volverán al último estado "
+                "conocido del dispositivo."
+            ),
+            "group_label": "Grupo {group}",
+        },
+        "fr": {
+            "title": "Dyness Battery: Plages horaires non envoyées",
+            "message": (
+                "Les plages horaires suivantes étaient incomplètes/peu plausibles et "
+                "n'ont PAS été envoyées à Dyness : {details}. Merci de corriger les "
+                "valeurs — au prochain sondage, les groupes concernés seront réinitialisés "
+                "au dernier état connu de l'appareil."
+            ),
+            "group_label": "Groupe {group}",
+        },
+        "pt": {
+            "title": "Dyness Battery: Janelas horárias não enviadas",
+            "message": (
+                "As seguintes janelas horárias estavam incompletas/implausíveis e NÃO "
+                "foram enviadas para a Dyness: {details}. Corrija os valores — na "
+                "próxima consulta, os grupos afetados serão repostos para o último "
+                "estado conhecido do dispositivo."
+            ),
+            "group_label": "Grupo {group}",
+        },
+    },
+    "tou_autostart": {
+        "de": {
+            "title": "Dyness Battery: Zeitfenster {group}",
+            "message": (
+                "Da Zeitfenster {group} noch AUS war, werden alle Daten 30 Sekunden "
+                "gesammelt und dann zu Dyness gesendet. Dabei wird auch der Schalter "
+                "mit aktiviert."
+            ),
+        },
+        "en": {
+            "title": "Dyness Battery: Time window {group}",
+            "message": (
+                "Since time window {group} was still OFF, all data will be collected "
+                "for 30 seconds and then sent to Dyness. This will also turn on the "
+                "switch."
+            ),
+        },
+        "es": {
+            "title": "Dyness Battery: Franja horaria {group}",
+            "message": (
+                "Como la franja horaria {group} seguía APAGADA, todos los datos se "
+                "recopilarán durante 30 segundos y luego se enviarán a Dyness. Esto "
+                "también activará el interruptor."
+            ),
+        },
+        "fr": {
+            "title": "Dyness Battery: Plage horaire {group}",
+            "message": (
+                "Comme la plage horaire {group} était encore désactivée, toutes les "
+                "données seront collectées pendant 30 secondes puis envoyées à Dyness. "
+                "Cela activera également l'interrupteur."
+            ),
+        },
+        "pt": {
+            "title": "Dyness Battery: Janela horária {group}",
+            "message": (
+                "Como a janela horária {group} ainda estava DESLIGADA, todos os dados "
+                "serão recolhidos durante 30 segundos e depois enviados para a Dyness. "
+                "Isto também ativará o interruptor."
+            ),
+        },
+    },
+    "refresh_reminder": {
+        "de": {
+            "title": "Dyness Battery: Serverdaten abgerufen",
+            "message": (
+                "Start/Ende/Leistung/Modus sowie Leistungsgrenze/Entladetiefe wurden neu "
+                "von Dyness geholt.\n\n"
+                "Hinweis: Der Schalter \"Zeitfenster X aktiv\" kann NICHT automatisch mit "
+                "der App abgeglichen werden (dafür gibt es keinen zuverlässigen "
+                "Auslesepunkt). Hast du ein Zeitfenster in der App deaktiviert? Dann "
+                "bitte den zugehörigen Schalter hier in Home Assistant manuell von EIN "
+                "auf AUS umstellen."
+            ),
+        },
+        "en": {
+            "title": "Dyness Battery: Server data fetched",
+            "message": (
+                "Start/end/power/mode as well as power limit/depth of discharge were "
+                "re-fetched from Dyness.\n\n"
+                "Note: The \"Time Window X Active\" switch CANNOT be automatically "
+                "synced with the app (there is no reliable readout point for this). "
+                "Did you disable a time window in the app? Then please manually switch "
+                "the corresponding switch here in Home Assistant from ON to OFF."
+            ),
+        },
+        "es": {
+            "title": "Dyness Battery: Datos del servidor obtenidos",
+            "message": (
+                "Inicio/fin/potencia/modo, así como el límite de potencia/profundidad "
+                "de descarga, se han vuelto a obtener de Dyness.\n\n"
+                "Nota: El interruptor \"Franja horaria X activa\" NO se puede "
+                "sincronizar automáticamente con la app (no existe un punto de lectura "
+                "fiable para ello). ¿Has desactivado una franja horaria en la app? "
+                "Entonces cambia manualmente el interruptor correspondiente aquí en "
+                "Home Assistant de ENCENDIDO a APAGADO."
+            ),
+        },
+        "fr": {
+            "title": "Dyness Battery: Données serveur récupérées",
+            "message": (
+                "Début/fin/puissance/mode ainsi que limite de puissance/profondeur de "
+                "décharge ont été récupérés à nouveau depuis Dyness.\n\n"
+                "Remarque : l'interrupteur \"Plage horaire X active\" NE PEUT PAS être "
+                "synchronisé automatiquement avec l'appli (aucun point de lecture fiable "
+                "n'existe pour cela). Avez-vous désactivé une plage horaire dans "
+                "l'appli ? Merci de basculer manuellement l'interrupteur correspondant "
+                "ici dans Home Assistant de ACTIVÉ à DÉSACTIVÉ."
+            ),
+        },
+        "pt": {
+            "title": "Dyness Battery: Dados do servidor obtidos",
+            "message": (
+                "Início/fim/potência/modo, bem como limite de potência/profundidade de "
+                "descarga, foram obtidos novamente da Dyness.\n\n"
+                "Nota: O interruptor \"Janela horária X ativa\" NÃO pode ser "
+                "sincronizado automaticamente com a app (não existe um ponto de leitura "
+                "fiável para isso). Desativaste uma janela horária na app? Então muda "
+                "manualmente o interruptor correspondente aqui no Home Assistant de "
+                "LIGADO para DESLIGADO."
+            ),
+        },
+    },
+}
+
+
+def _notify_lang(hass) -> str:
+    lang = (getattr(hass.config, "language", None) or _NOTIFY_FALLBACK_LANG)[:2].lower()
+    return lang if lang in ("de", "en", "es", "fr", "pt") else _NOTIFY_FALLBACK_LANG
+
+
+def _notify_reason_text(hass, reason_key: str, **kwargs) -> str:
+    lang = _notify_lang(hass)
+    template = _NOTIFY_REASONS[reason_key].get(lang, _NOTIFY_REASONS[reason_key][_NOTIFY_FALLBACK_LANG])
+    return template.format(**kwargs)
+
+
+def _notify_text(hass, notify_key: str, **kwargs) -> tuple[str, str]:
+    lang = _notify_lang(hass)
+    entry = _NOTIFY_TEXTS[notify_key].get(lang, _NOTIFY_TEXTS[notify_key][_NOTIFY_FALLBACK_LANG])
+    title = entry["title"].format(**kwargs)
+    message = entry["message"].format(**kwargs)
+    return title, message
 
 # Entitäten die in früheren Versionen existierten aber entfernt wurden.
 # Diese werden beim Setup automatisch aus der Entity-Registry gelöscht.
@@ -209,6 +543,113 @@ def _is_success(result: dict) -> bool:
     return str(code) in ("0", "200") or code == 0
 
 
+# ── Control-Patch: Zeitfenster-Gruppen (TOU) ─────────────────────
+
+def _hhmm_int_to_str(raw) -> str | None:
+    """Wandelt einen rohen HHMM-Integer (z.B. 800 -> '08:00') in HH:mm um."""
+    v = _to_float(raw)
+    if v is None:
+        return None
+    v = int(v)
+    hh, mm = divmod(v, 100)
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _tou_groups_overlap_errors(groups: dict) -> list[tuple[int, str, dict]]:
+    """Prüft alle konfigurierten Zeitfenster auf Überschneidungen (cross-group).
+
+    Unkonfigurierte Gruppen (power=0, 00:00/00:00) werden übersprungen.
+    Gibt eine Liste von (group_num, reason_key, reason_kwargs) zurück — gleiche
+    Signatur wie _tou_group_valid, damit der Aufrufer beides einheitlich behandeln kann.
+    Jede überschneidende Gruppe wird genau einmal gemeldet (Paar A↔B → Fehler für A).
+    """
+    windows: list[tuple[int, int, int]] = []  # (start_min, end_min, group_num)
+    for i in range(1, 5):
+        g = groups.get(i, _DEFAULT_TOU_GROUP)
+        power = int(g.get("power", 0))
+        start = g.get("startTime", "00:00")
+        end   = g.get("endTime",   "00:00")
+        if power == 0 and start == "00:00" and end == "00:00":
+            continue  # unkonfiguriert — von Überschneidungsprüfung ausgenommen
+        try:
+            sh, sm = map(int, start.split(":"))
+            eh, em = map(int, end.split(":"))
+        except (ValueError, AttributeError):
+            continue
+        windows.append((sh * 60 + sm, eh * 60 + em, i))
+
+    errors: list[tuple[int, str, dict]] = []
+    already_flagged: set[int] = set()
+    for idx_a in range(len(windows)):
+        s_a, e_a, g_a = windows[idx_a]
+        for idx_b in range(idx_a + 1, len(windows)):
+            s_b, e_b, g_b = windows[idx_b]
+            if s_a < e_b and s_b < e_a:
+                if g_a not in already_flagged:
+                    errors.append((g_a, "overlap", {"other": g_b}))
+                    already_flagged.add(g_a)
+                if g_b not in already_flagged:
+                    errors.append((g_b, "overlap", {"other": g_a}))
+                    already_flagged.add(g_b)
+    return errors
+
+
+_DEFAULT_TOU_GROUP = {
+    "state": "0", "startTime": "00:00", "endTime": "00:00",
+    "power": 0, "mode": "16", "week": "0,1,2,3,4,5,6",
+}
+
+
+def _decode_tou_group(rt: dict, base_point: int) -> dict | None:
+    """Dekodiert Start/Ende/Leistung/Modus einer der 4 Zeitfenster-Gruppen.
+
+    base_point ist 8100 (Gruppe 1), 8500 (Gruppe 2), 8900 (Gruppe 3) oder 9300
+    (Gruppe 4). Power-Wert = Rohwert // 32, untere 5 Bit = mode (16=Load
+    Priority, 17=Battery Priority; 255=Shutdown passt nicht in 5 Bit und wird
+    daher hier nicht erkannt — fällt dann auf "16" zurück).
+
+    WICHTIG zu "State" (base_point selbst, z.B. "8100"): Praxistest zeigte den
+    Wert 127 (=0b1111111, 7 gesetzte Bits) gleichzeitig bei ALLEN 4 Gruppen,
+    unabhängig davon ob eine Gruppe per SetWorkModeSetting als state="0" oder
+    "1" gesendet wurde — und unabhängig davon waren auch für "deaktivierte"
+    Gruppen Start/Ende/Power weiterhin vollständig befüllt. Das spricht dafür,
+    dass dieser Punkt tatsächlich eine Wochentage-Bitmaske ist (alle Gruppen
+    wurden mit week="alle Tage" gesendet), NICHT der Ein/Aus-Zustand. Es gibt
+    also aktuell keinen bekannten, verlässlichen Rohpunkt fürs Ein/Aus-Readback
+    — diese Funktion liefert "state" deshalb bewusst NICHT mehr zurück; der
+    Aufrufer muss den zuletzt bekannten/gesetzten state-Wert selbst beibehalten.
+    """
+    raw_start = rt.get(str(base_point + 100))
+    raw_end = rt.get(str(base_point + 200))
+    raw_power = rt.get(str(base_point + 300))
+    if raw_power is None:
+        return None
+    power_raw = _to_float(raw_power)
+    if power_raw is None:
+        return None
+    power_raw = int(power_raw)
+    power = power_raw // 32
+    mode_bits = power_raw % 32
+    mode = str(mode_bits) if mode_bits in (16, 17) else "16"
+    start = _hhmm_int_to_str(raw_start) or "00:00"
+    end   = _hhmm_int_to_str(raw_end)   or "00:00"
+    # Normalisierung: Wenn power=0 aber Zeiten gesetzt (inkonsistenter Gerätezustand,
+    # z.B. deaktivierte Gruppe mit noch gespeicherten Zeiten), auf "unkonfiguriert"
+    # normalisieren. Verhindert, dass ein schiefer Telemetrie-Import beim nächsten
+    # Write aller 4 Gruppen die Validierung für eine unbeteiligte Gruppe bricht.
+    if power == 0:
+        start = "00:00"
+        end   = "00:00"
+    return {
+        "startTime": start,
+        "endTime":   end,
+        "power": power,
+        "mode":  mode,
+    }
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── Veraltete Entitäten aus der Entity-Registry entfernen ────────────────
     await _async_cleanup_stale_entities(hass, entry)
@@ -226,6 +667,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    from .services import async_setup_services
+    await async_setup_services(hass)
     return True
 
 
@@ -264,6 +707,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Services sind domain-weit (nicht per Entry) — erst entfernen wenn
+        # kein weiterer Entry mehr aktiv ist, damit andere Geräte sie noch nutzen können.
+        if not hass.data.get(DOMAIN):
+            from .services import SERVICE_SET_BASE_SETTING, SERVICE_SET_WORK_SCHEDULE
+            for svc in (SERVICE_SET_BASE_SETTING, SERVICE_SET_WORK_SCHEDULE):
+                if hass.services.has_service(DOMAIN, svc):
+                    hass.services.async_remove(DOMAIN, svc)
     return unload_ok
 
 
@@ -289,7 +739,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
         self._bound: bool = False
         self._bound_sns: set = set()  # Bereits gebundene Sub-Modul SNs
-        self._module_sns: list[str] = []
+        # Bekannte Sub-Modul-SNs — werden aus config_entry.data vorgeladen damit
+        # nach einem HA-Neustart sofort alle Module abgefragt werden können, ohne
+        # auf die nächste vollständige SUB-Antwort der API warten zu müssen.
+        _persisted = config_entry.data.get("known_module_sns", []) if config_entry else []
+        self._module_sns: list[str] = list(_persisted)
+        # known_single_sub_sn wird bewusst nicht persistiert — wird nach dem
+        # ersten erfolgreichen Poll aus SUB gesetzt. Persistenz würde
+        # async_update_entry aus _async_update_data erfordern.
+        self._single_sub_sn: str | None = None
         self._last_call_time: float = 0.0
         self._storage_list_cycle: int = 0  # Zähler für storage/list Throttling
         # Optimierung: getLastRunningDataBySn überspringen wenn einmal
@@ -303,6 +761,326 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         # Alarm-Delay — Zeitpunkt des ersten Auftretens pro Alarm-Label
         self._alarm_first_seen: dict[str, datetime] = {}
 
+        # ── Control-Patch: TOU-Zeitgruppen (SCHEMA_JUNIOR) ──────────────────
+        self.tou_groups: dict[int, dict] = {i: dict(_DEFAULT_TOU_GROUP) for i in range(1, 5)}
+        # _tou_pending[i] = "HA hat diese Gruppe mindestens einmal erfolgreich
+        # geschrieben" — bleibt danach DAUERHAFT True (kein Reset über Zeit/
+        # Abgleich). Dyness übernimmt Änderungen laut Praxistest quasi sofort;
+        # das realTime/data-Readback selbst ist aber unzuverlässig/flackrig
+        # (vermutlich gecachte/lastverteilte Replikate) und wird deshalb für
+        # bereits von HA kontrollierte Felder komplett ignoriert. Nur bei einem
+        # fehlgeschlagenen Schreibvorgang wird wieder auf Telemetrie vertraut.
+        # Ein HA-Neustart setzt den Zustand zurück (erneuter Telemetrie-Import).
+        self._tou_pending: dict[int, bool] = {i: False for i in range(1, 5)}
+        self._tou_write_unsub: dict[int, callable] = {i: None for i in range(1, 5)}
+        # Merkt sich "state" vom Beginn eines Bearbeitungszyklus (erster Edit
+        # nach abgelaufenem/keinem Timer), damit eine automatische Aktivierung
+        # bei fehlgeschlagener Validierung wieder zurückgenommen werden kann.
+        # Der Schalter soll sich für den Nutzer NICHT sichtbar ändern,
+        # wenn am Ende gar nichts gesendet wird.
+        self._tou_state_before_edit: dict[int, str | None] = {i: None for i in range(1, 5)}
+
+        # ── Control-Patch: Basis-Einstellung (SetBaseSetting) ───────────────
+        self.base_setting: dict = {"work_mode": _FIXED_WORK_MODE, "power_limit": 800, "discharge_depth": 70}
+        self._base_setting_pending: bool = False  # gleiche Semantik wie _tou_pending
+        self._base_setting_write_unsub = None
+
+        # ── Control-Patch: Write-Guard (Rate-Limit/Circuit-Breaker) ─────────
+        self.write_enabled: bool = False  # startet NACH JEDEM Neustart bewusst aus
+        self._write_timestamps: list[float] = []
+        self._write_blocked_until: float | None = None
+
+    async def _guard_check_and_record(self) -> None:
+        """Prüft, ob geschrieben werden darf. Wirft HomeAssistantError wenn nicht.
+
+        Wird ausschließlich von async_set_base_setting()/async_set_work_schedule()
+        aufgerufen - NIE vom Lese-Update-Zyklus. Lesen funktioniert also immer,
+        unabhängig vom Zustand dieses Guards.
+        """
+        now = _time.monotonic()
+
+        if self._write_blocked_until and now < self._write_blocked_until:
+            remaining = int(self._write_blocked_until - now)
+            raise HomeAssistantError(
+                f"Dyness: Schreiben ist wegen zu vieler Schreibversuche noch "
+                f"{remaining}s gesperrt (Circuit-Breaker)."
+            )
+        self._write_blocked_until = None
+
+        if not self.write_enabled:
+            raise HomeAssistantError(
+                "Dyness: Schreiben ist deaktiviert. Bitte "
+                "switch.dyness_write_enabled einschalten."
+            )
+
+        self._write_timestamps = [
+            t for t in self._write_timestamps if now - t < WRITE_WINDOW_SECONDS
+        ]
+
+        if len(self._write_timestamps) >= WRITE_MAX_CALLS:
+            self._write_blocked_until = now + WRITE_COOLDOWN_SECONDS
+            self.write_enabled = False
+            _LOGGER.error(
+                "Dyness: Schreib-Ratenlimit erreicht (%d Schreibvorgänge in %ds). "
+                "Schreiben für %ds gesperrt und deaktiviert.",
+                WRITE_MAX_CALLS, WRITE_WINDOW_SECONDS, WRITE_COOLDOWN_SECONDS,
+            )
+            try:
+                title, message = _notify_text(
+                    self.hass, "write_blocked",
+                    max_calls=WRITE_MAX_CALLS,
+                    window_min=WRITE_WINDOW_SECONDS // 60,
+                    cooldown_min=WRITE_COOLDOWN_SECONDS // 60,
+                )
+                await self.hass.services.async_call(
+                    "persistent_notification", "create",
+                    {
+                        "title": title,
+                        "message": message,
+                        "notification_id": "dyness_write_blocked",
+                    },
+                    blocking=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            self.async_update_listeners()
+            raise HomeAssistantError("Dyness: Schreib-Ratenlimit erreicht, Schreiben gesperrt.")
+
+        self._write_timestamps.append(now)
+
+    async def async_set_base_setting(self, work_mode: str, power_limit: str,
+                                       discharge_depth: str) -> dict:
+        """Setzt Leistungsgrenze und Entladetiefe (+ Pflichtfeld workMode).
+
+        POST /v2/SetBaseSetting
+        work_mode: laut PDF Pflichtfeld ("0"/"1"/"3"/"6"), auf der Junior Box
+                   aber bestätigt wirkungslos — wird nur strukturell benötigt.
+        power_limit: Leistung in W (152-800, App-Limit)
+        discharge_depth: Entladetiefe in % (20-100, App-Limit)
+        """
+        await self._guard_check_and_record()
+        if str(work_mode) not in VALID_WORK_MODES:
+            raise HomeAssistantError(
+                "Dyness: Ungültiger workMode-Wert (nur 0/1/3/6 erlaubt). Das Feld "
+                "hat auf der Junior Box bestätigt keine Wirkung und wird nur aus "
+                "Pflichtfeld-Gründen mitgeschickt."
+            )
+        dd = _to_float(discharge_depth)
+        if dd is None or not (DOD_MIN <= dd <= DOD_MAX):
+            raise HomeAssistantError(
+                f"Dyness: Entladetiefe (DOD) muss zwischen {DOD_MIN}% und {DOD_MAX}% "
+                f"liegen (App-Limit) — erhalten: {discharge_depth}."
+            )
+        pl = _to_float(power_limit)
+        if pl is None or not (POWER_LIMIT_MIN <= pl <= POWER_LIMIT_MAX):
+            raise HomeAssistantError(
+                f"Dyness: Leistungsgrenze muss zwischen {POWER_LIMIT_MIN}W und "
+                f"{POWER_LIMIT_MAX}W liegen (App-Limit) — erhalten: {power_limit}."
+            )
+        if int(pl) % POWER_STEP != 0:
+            raise HomeAssistantError(
+                f"Dyness: Leistungsgrenze muss ein Vielfaches von {POWER_STEP}W sein "
+                f"(z.B. {POWER_LIMIT_MIN}, {POWER_LIMIT_MIN+POWER_STEP}, ...) — "
+                f"erhalten: {power_limit}."
+            )
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(self.hass)
+        body = {
+            "deviceSn": self.device_sn,
+            "workMode": str(work_mode),
+            "powerLimit": str(power_limit),
+            "dischargeDepth": str(discharge_depth),
+        }
+        result = await self._call(session, "/v2/SetBaseSetting", body)
+        _LOGGER.info("Dyness SetBaseSetting: %s -> %s", body, result)
+        if not _is_success(result):
+            raise HomeAssistantError(f"Dyness SetBaseSetting fehlgeschlagen: {result}")
+        # KEIN async_request_refresh() hier — Lesen und Schreiben bleiben getrennt.
+        # Ein sofortiger Refresh käme oft zu früh (Gerät hat die Änderung intern
+        # noch nicht übernommen) und verschiebt zusätzlich den nächsten planmäßigen
+        # Poll-Zyklus. Der normale Update-Intervall übernimmt die Bestätigung.
+        return result
+
+    async def async_set_work_schedule(self, groups: list[dict]) -> dict:
+        """Setzt die 4 Zeitfenster-Gruppen.
+
+        POST /v2/SetWorkModeSetting
+        groups: Liste von genau 4 dicts mit batteryWorkGroup/state/mode/
+                startTime/endTime/power/week (alle Werte als String)
+        """
+        await self._guard_check_and_record()
+        if len(groups) != 4:
+            raise HomeAssistantError(
+                "Es müssen genau 4 Zeitfenster-Gruppen (1-4) übergeben werden."
+            )
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        session = async_get_clientsession(self.hass)
+        body = {"deviceSn": self.device_sn, "workGroups": groups}
+        result = await self._call(session, "/v2/SetWorkModeSetting", body)
+        _LOGGER.info("Dyness SetWorkModeSetting: %s -> %s", body, result)
+        if not _is_success(result):
+            raise HomeAssistantError(f"Dyness SetWorkModeSetting fehlgeschlagen: {result}")
+        # KEIN async_request_refresh() hier.
+        return result
+
+    async def snapshot_tou_state_before_edit(self, group_num: int) -> None:
+        """MUSS von Entities als ALLERERSTE Zeile aufgerufen werden (mit await),
+        bevor sie tou_groups[group_num] mutieren (auch vor einer Auto-Aktivierung).
+
+        Nur wirksam, wenn gerade kein Sende-Timer für diese Gruppe läuft (=
+        frischer Bearbeitungszyklus).
+
+        War die Gruppe vor diesem Zyklus AUS, wird zusätzlich einmalig eine
+        Persistent Notification angezeigt, die auf die anstehende Auto-
+        Aktivierung hinweist.
+        """
+        if not self._tou_write_unsub.get(group_num):
+            prev = self.tou_groups.get(group_num, {}).get("state", "0")
+            self._tou_state_before_edit[group_num] = prev
+            if prev != "1":
+                try:
+                    title, message = _notify_text(self.hass, "tou_autostart", group=group_num)
+                    await self.hass.services.async_call(
+                        "persistent_notification", "create",
+                        {
+                            "title": title,
+                            "message": message,
+                            "notification_id": f"dyness_tou_autostart_{group_num}",
+                        },
+                        blocking=False,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def schedule_tou_write(self, group_num: int, delay: float = 30.0) -> None:
+        """Plant das Senden ALLER 4 Gruppen nach kurzer Verzögerung (Debounce)."""
+        self._tou_pending[group_num] = True
+        if self._tou_write_unsub.get(group_num):
+            self._tou_write_unsub[group_num]()
+
+        async def _do_write(_now) -> None:
+            self._tou_write_unsub[group_num] = None
+
+            # Vollvalidierung ALLER 4 Gruppen vor dem Senden: die API verlangt
+            # immer alle 4 zusammen, daher muss jede einzelne entweder komplett
+            # unkonfiguriert oder vollständig plausibel sein.
+            # Bei Verstoß: gar nichts senden, betroffene Gruppe(n) wieder für
+            # Telemetrie-Readback freigeben (revertiert den unplausiblen Wert
+            # beim nächsten Lesepoll automatisch) UND den Schalter "aktiv"
+            # sofort auf den Zustand vor dieser Bearbeitung zurücksetzen,
+            # falls er durch Auto-Aktivierung verändert wurde.
+            # Der Nutzer soll keine Schalter-Änderung sehen, wenn am Ende gar
+            # nichts gesendet wird.
+            invalid = []
+            for i in range(1, 5):
+                g = self.tou_groups.get(i, _DEFAULT_TOU_GROUP)
+                ok, reason_key, reason_kwargs = _tou_group_valid(g)
+                if not ok:
+                    invalid.append((i, reason_key, reason_kwargs))
+            # Überschneidungsprüfung (cross-group): nur wenn Einzel-Validierung OK
+            if not invalid:
+                invalid.extend(_tou_groups_overlap_errors(self.tou_groups))
+            if invalid:
+                # Für das Log reicht Deutsch/Reason-Key, für die Notification
+                # wird pro Systemsprache übersetzt.
+                _LOGGER.error(
+                    "Dyness: Zeitfenster-Sendung abgebrochen — %s",
+                    "; ".join(f"Gruppe {i}: {rk}" for i, rk, _ in invalid),
+                )
+                reverted_any = False
+                # Alle Gruppen mit Snapshot zurücksetzen: entweder sie waren
+                # selbst invalid ODER sie waren die auslösende Gruppe und
+                # wurden nie gesendet. Gruppen ohne Snapshot (nie in diesem
+                # Zyklus bearbeitet) bleiben unverändert.
+                invalid_nums = {i for i, _, _ in invalid}
+                revert_candidates = invalid_nums | {group_num}
+                for i in revert_candidates:
+                    self._tou_pending[i] = False
+                    prev_state = self._tou_state_before_edit.get(i)
+                    if prev_state is not None and self.tou_groups.get(i, {}).get("state") != prev_state:
+                        self.tou_groups[i]["state"] = prev_state
+                        reverted_any = True
+                if reverted_any:
+                    self.async_update_listeners()  # Schalter sofort in der GUI aktualisieren
+                try:
+                    lang = _notify_lang(self.hass)
+                    group_label_tpl = _NOTIFY_TEXTS["tou_invalid"].get(
+                        lang, _NOTIFY_TEXTS["tou_invalid"][_NOTIFY_FALLBACK_LANG]
+                    )["group_label"]
+                    details = "; ".join(
+                        f"{group_label_tpl.format(group=i)}: {_notify_reason_text(self.hass, rk, **kw)}"
+                        for i, rk, kw in invalid
+                    )
+                    title, message = _notify_text(self.hass, "tou_invalid", details=details)
+                    await self.hass.services.async_call(
+                        "persistent_notification", "create",
+                        {
+                            "title": title,
+                            "message": message,
+                            "notification_id": "dyness_tou_invalid",
+                        },
+                        blocking=False,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+            groups_payload = []
+            for i in range(1, 5):
+                g = self.tou_groups.get(i, _DEFAULT_TOU_GROUP)
+                groups_payload.append({
+                    "batteryWorkGroup": str(i),
+                    "state": g["state"],
+                    "mode": g["mode"],
+                    "startTime": g["startTime"],
+                    "endTime": g["endTime"],
+                    "power": str(g["power"]),
+                    "week": g.get("week", "0,1,2,3,4,5,6"),
+                })
+            try:
+                await self.async_set_work_schedule(groups_payload)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.error("Dyness: Auto-Write Zeitgruppen fehlgeschlagen: %s", err)
+                # Fehlgeschlagen (z.B. Write-Guard blockiert, Netzwerkfehler):
+                # nichts wurde übernommen. Pending freigeben, DAMIT AUCH der
+                # "aktiv"-Schalter auf den Zustand vor dieser Bearbeitung
+                # zurückgesetzt wird - sonst bliebe er fälschlich auf EIN
+                # hängen, obwohl nie etwas gesendet wurde.
+                self._tou_pending[group_num] = False
+                prev_state = self._tou_state_before_edit.get(group_num)
+                if prev_state is not None and self.tou_groups.get(group_num, {}).get("state") != prev_state:
+                    self.tou_groups[group_num]["state"] = prev_state
+                    self.async_update_listeners()
+                return
+            # Erfolgreich gesendet: Pending bleibt DAUERHAFT True, kein erneutes
+            # Auslesen mehr für diese Gruppe.
+
+        self._tou_write_unsub[group_num] = async_call_later(self.hass, delay, _do_write)
+
+    def schedule_base_setting_write(self, delay: float = 30.0) -> None:
+        """Plant das Senden von power_limit/discharge_depth (Debounce)."""
+        self._base_setting_pending = True
+        if self._base_setting_write_unsub:
+            self._base_setting_write_unsub()
+
+        async def _do_write(_now) -> None:
+            self._base_setting_write_unsub = None
+            try:
+                await self.async_set_base_setting(
+                    work_mode=str(self.base_setting["work_mode"]),
+                    power_limit=str(self.base_setting["power_limit"]),
+                    discharge_depth=str(self.base_setting["discharge_depth"]),
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.error("Dyness: Auto-Write Basis-Einstellung fehlgeschlagen: %s", err)
+                self._base_setting_pending = False
+                return
+            # Erfolgreich: Pending bleibt DAUERHAFT True, kein erneutes Auslesen.
+
+        self._base_setting_write_unsub = async_call_later(self.hass, delay, _do_write)
+
     async def _call(self, session: aiohttp.ClientSession, path: str, body_dict: dict,
                     max_retries: int = _MAX_RETRIES) -> dict:
         """Rate-limitierter API-Aufruf mit optionalem Retry bei HTTP 429.
@@ -310,13 +1088,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         max_retries=0 für Sub-Modul-Calls: sofort aufgeben bei 429 statt lange
         zu warten und den Update-Zyklus zu blockieren.
         """
-        elapsed = time.monotonic() - self._last_call_time
+        elapsed = _time.monotonic() - self._last_call_time
         if elapsed < _MIN_CALL_INTERVAL:
             await asyncio.sleep(_MIN_CALL_INTERVAL - elapsed)
         url = f"{self.api_base}/openapi/ems-device{path}"
         body = json.dumps(body_dict, separators=(',', ':'))
         for attempt in range(max_retries + 1):
-            self._last_call_time = time.monotonic()
+            self._last_call_time = _time.monotonic()
             headers = _build_headers(self.api_id, self.api_secret, body, path)
             try:
                 async with session.post(url, headers=headers, data=body) as response:
@@ -336,11 +1114,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                     try:
                         return json.loads(raw_text)
                     except json.JSONDecodeError:
-                        # Leere oder ungültige Antwort (z.B. Serverausfall)
-                        raise aiohttp.ClientError(
-                            f"Leere oder ungültige Antwort von {path} "
-                            f"(vermutlich temporäre Serverunterbrechung)"
+                        # Leere oder ungültige Antwort (z.B. Serverausfall) —
+                        # {} zurückgeben statt Exception um Retry-Verzögerungen
+                        # bei Sub-Modul-Calls zu vermeiden
+                        _LOGGER.warning(
+                            "Dyness %s: Leere oder ungültige Antwort vom Server "
+                            "(vermutlich temporäre Serverunterbrechung)", path
                         )
+                        return {}
             except aiohttp.ClientError as e:
                 _LOGGER.warning("Dyness %s Verbindungsfehler (Versuch %d/%d): %s",
                                 path, attempt + 1, max_retries + 1, e)
@@ -359,6 +1140,27 @@ class DynessDataCoordinator(DataUpdateCoordinator):
             _LOGGER.info(
                 "Dyness: %d Modul(e) erkannt → Scan-Intervall auf %d Min gesetzt",
                 n, int(new_interval.total_seconds() / 60)
+            )
+
+    async def _persist_module_sns(self, entry, merged: list[str]) -> None:
+        """Persistiert die bekannten Sub-Modul-SNs in config_entry.data.
+
+        Wird bewusst via async_create_task aufgerufen (nicht direkt aus
+        _async_update_data), damit async_update_entry nicht im selben
+        Event-Loop-Tick wie der Coordinator-Update landet und den Schedule
+        destabilisiert.
+        """
+        try:
+            self.hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, "known_module_sns": merged},
+            )
+            _LOGGER.debug(
+                "Dyness: known_module_sns persistiert: %s", merged
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Dyness: known_module_sns konnte nicht gespeichert werden: %s", err
             )
 
     async def _async_update_data(self):
@@ -496,7 +1298,13 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             _LOGGER.debug("Dyness realTime/data: %d Punkte", len(self.realtime_data))
 
                             # ── Sub-Modul Discovery via SUB Point ─────────────
-                            # Sub-Modul Discovery — bei jedem Update prüfen ob neue Module dazugekommen sind
+                            # SUB wird als additive Quelle behandelt — neue Module werden
+                            # in die bekannte Menge aufgenommen, aber nie entfernt.
+                            # Hintergrund: Die Dyness-API liefert SUB intermittierend
+                            # unvollständig. Ein Replace würde bekannte Module
+                            # für mehrere Stunden aus dem Poll-Loop werfen.
+                            # Bekannte SNs werden in config_entry.data persistiert, damit
+                            # nach einem HA-Neustart sofort alle Module abgefragt werden.
                             sub_raw = self.realtime_data.get("SUB", "")
                             if sub_raw:
                                 candidates = [s.strip() for s in str(sub_raw).split(",") if s.strip()]
@@ -505,18 +1313,41 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     if not s.endswith(_BMS_SUFFIXES)
                                 ]
                                 if len(candidates) > 1:
-                                    if set(candidates) != set(self._module_sns):
+                                    # Mehrere Module: Union mit bekannter Liste
+                                    merged = sorted(set(self._module_sns) | set(candidates))
+                                    if set(merged) != set(self._module_sns):
                                         _LOGGER.info(
                                             "Dyness: Sub-Module aktualisiert: %s → %s",
-                                            self._module_sns, candidates
+                                            self._module_sns, merged,
                                         )
-                                        self._module_sns = candidates
+                                        self._module_sns = merged
                                         self._update_scan_interval()
-                                elif not self._module_sns:
-                                    _LOGGER.debug(
-                                        "Dyness: Einzelnes Sub-Modul — kein separater Abruf (%s)",
-                                        candidates
-                                    )
+                                        # async_update_entry NICHT direkt aus
+                                        # _async_update_data aufrufen — HA feuert
+                                        # intern CONFIG_ENTRY_CHANGED im selben
+                                        # Event-Loop-Tick und kann den Coordinator-
+                                        # Schedule destabilisieren. Stattdessen in
+                                        # den nächsten Tick verschieben.
+                                        if self.config_entry is not None:
+                                            _entry = self.config_entry
+                                            _merged = merged
+                                            self.hass.async_create_task(
+                                                self._persist_module_sns(_entry, _merged)
+                                            )
+                                elif candidates and not self._module_sns:
+                                    # Einzelnes Sub-Modul — kein separates Device,
+                                    # aber Zellspannungen via direktem v1-Call.
+                                    # Nicht persistiert: wird nach dem ersten Poll
+                                    # zuverlässig aus SUB gesetzt, Persistenz würde
+                                    # async_update_entry aus _async_update_data
+                                    # heraus erfordern.
+                                    sn = candidates[0]
+                                    if self._single_sub_sn != sn:
+                                        self._single_sub_sn = sn
+                                        _LOGGER.debug(
+                                            "Dyness: Einzelnes Sub-Modul erkannt: %s "
+                                            "(Zellspannungen via direktem Abruf)", sn,
+                                        )
                         else:
                             _LOGGER.debug(
                                 "Dyness realTime/data: Code %s – %s",
@@ -843,6 +1674,41 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["pvEnergyToday"]  = rt.get("7600")
                             data["outEnergyTotal"] = rt.get("7700")
                             data["outEnergyToday"] = rt.get("7800")
+
+                            # Control-Patch: TOU-Zeitgruppen Readback (NUR startTime/
+                            # endTime/power/mode — "state" und "week" sind aus
+                            # realTime/data nicht zuverlässig auslesbar und bleiben daher
+                            # exklusiv in der Hand von Entities/Services/Automationen.
+                            #
+                            # Sobald HA eine Gruppe einmal erfolgreich geschrieben hat
+                            # (_tou_pending[i] == True), wird sie hier DAUERHAFT nicht
+                            # mehr aus der Telemetrie überschrieben
+                            # im __init__ der Coordinator-Klasse (Dyness übernimmt
+                            # Schreibvorgänge quasi sofort, aber das Readback selbst
+                            # ist unzuverlässig/flackrig).
+                            for i, base in enumerate((8100, 8500, 8900, 9300), start=1):
+                                if self._tou_pending.get(i):
+                                    continue
+                                g = _decode_tou_group(rt, base)
+                                if not g:
+                                    continue
+                                existing = self.tou_groups.get(i, dict(_DEFAULT_TOU_GROUP))
+                                g["state"] = existing.get("state", "0")
+                                g["week"] = existing.get("week", "0,1,2,3,4,5,6")
+                                self.tou_groups[i] = g
+
+                            if not self._base_setting_pending:
+                                # Punkt "6400" wird NICHT mehr als work_mode-Readback
+                                # verwendet — Praxistest zeigte einen Wert ("16"), der
+                                # nicht im gültigen SetBaseSetting-Enum (0/1/3/6) liegt,
+                                # UND ein isolierter Test bestätigte: workMode hat auf
+                                # der Junior Box ohnehin keine Wirkung.
+                                bpl = _to_float(rt.get("6500"))
+                                bdd = _to_float(rt.get("6600"))
+                                if bpl is not None and 0 <= bpl <= 800:
+                                    self.base_setting["power_limit"] = int(bpl)
+                                if bdd is not None and 0 <= bdd <= 100:
+                                    self.base_setting["discharge_depth"] = int(bdd)
                     elif schema == SCHEMA_POWERBOX_PRO:
                         # PowerBox Pro / PowerHaus Schema
                         # batteryCapacity aus station/info = Gesamtkapazität direkt
@@ -1367,11 +2233,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             if cells_pb:
                                 data["cellVoltageDiffMv"] = round((max(cells_pb) - min(cells_pb)) * 1000, 1)
 
-                            # Single-Sub-Modul-Poll: Falls Master-Points 10300-11800 leer
-                            # und genau ein Sub-Modul bekannt → Sub-Modul direkt abfragen und
-                            # Zellspannungen + Temps auf Hauptdevice mappen (kein separates Device).
-                            if not cells_pb and len(self._module_sns) == 1:
-                                _sub_sn = self._module_sns[0]
+                            # Single-Sub-Modul-Poll: self._single_sub_sn gesetzt
+                            # wenn genau 1 SUB erkannt — Master hat keine Einzelzellen.
+                            if not cells_pb and self._single_sub_sn:
+                                _sub_sn = self._single_sub_sn
                                 _LOGGER.debug(
                                     "Dyness PowerBrick: Keine Zellen vom Master — "
                                     "frage Sub-Modul %s direkt ab", _sub_sn
@@ -1399,7 +2264,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                             data["cellVoltageDiffMv"] = round(
                                                 (max(_sub_cells) - min(_sub_cells)) * 1000, 1
                                             )
-                                        # Temperaturen aus Sub-Modul
                                         _bms_t = _to_float(_sub_pts.get("12400"))
                                         if _bms_t is not None:
                                             data["tempBmsMax"] = _bms_t
@@ -1411,21 +2275,17 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                         if _valid_t:
                                             data["tempMax"] = max(_valid_t)
                                             data["tempMin"] = min(_valid_t) if len(_valid_t) > 1 else data.get("tempMin")
-                                        # Zyklenanzahl aus Sub-Modul falls Master leer
                                         if data.get("cycleCount") is None:
                                             _cc = _sub_pts.get("13900")
                                             if _cc:
                                                 data["cycleCount"] = _cc
                                         _LOGGER.debug(
-                                            "Dyness PowerBrick Sub-Modul %s: %d Zellen, "
-                                            "tempBmsMax=%s°C",
-                                            _sub_sn, len(_sub_cells),
-                                            data.get("tempBmsMax"),
+                                            "Dyness PowerBrick Sub-Modul %s: %d Zellen, tempBmsMax=%s°C",
+                                            _sub_sn, len(_sub_cells), data.get("tempBmsMax"),
                                         )
                                 except Exception as _e_sub:
                                     _LOGGER.debug(
-                                        "Dyness PowerBrick: Sub-Modul-Abruf fehlgeschlagen: %s",
-                                        _e_sub
+                                        "Dyness PowerBrick: Sub-Modul-Abruf fehlgeschlagen: %s", _e_sub
                                     )
 
                         # Kapazitätsberechnung (beide Varianten)
@@ -1794,7 +2654,11 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     if alarm_texts:
                         data["alarmText"] = ", ".join(alarm_texts)
-                        if reportable:
+                        # Notification nur wenn alarmSys=True (Point 4100 gesetzt).
+                        # Top-Charge-Warnflags (3208 etc.) befüllen alarmText als
+                        # Diagnose-Information, triggern aber keine HA-Notification.
+                        _alarm_sys_active = bool(data.get("alarmSys"))
+                        if reportable and _alarm_sys_active:
                             self.hass.async_create_task(
                                 self.hass.services.async_call(
                                     "persistent_notification", "create", {
@@ -1810,10 +2674,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             )
                         else:
                             _LOGGER.debug(
-                                "Dyness: %d Alarm(e) aktiv, Delay %d Min noch nicht erreicht "
-                                "(max. seit %s) — keine Notification",
-                                len(alarm_texts), alarm_delay_min,
-                                min(self._alarm_first_seen.values(), default=now_utc),
+                                "Dyness: %d Alarm(e) aktiv (alarmSys=%s), Delay %d Min noch nicht "
+                                "erreicht oder kein echter Fehler — keine Benachrichtigung",
+                                len(alarm_texts), _alarm_sys_active, alarm_delay_min,
                             )
                     else:
                         data["alarmText"] = "OK"

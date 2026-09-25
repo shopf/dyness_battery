@@ -427,6 +427,56 @@
       "data_update_time": {
         "name": "Horodatage des données"
       }
+    },
+    "number": {
+      "base_power_limit": {
+        "name": "Limite de puissance"
+      },
+      "base_discharge_depth": {
+        "name": "Profondeur de décharge (DOD)"
+      },
+      "group_power": {
+        "name": "Plage horaire {group} Puissance"
+      }
+    },
+    "select": {
+      "group_mode": {
+        "name": "Plage horaire {group} Mode",
+        "state": {
+          "load_priority": "Priorité à la consommation",
+          "battery_priority": "Priorité à la batterie",
+          "shutdown": "Arrêt"
+        }
+      },
+      "group_week": {
+        "name": "Plage horaire {group} Jours",
+        "state": {
+          "all_days": "Tous les jours",
+          "weekdays": "Semaine (Lun-Ven)",
+          "weekend": "Week-end (Sam-Dim)"
+        }
+      }
+    },
+    "switch": {
+      "write_enabled": {
+        "name": "Écriture activée"
+      },
+      "group_enabled": {
+        "name": "Plage horaire {group} active"
+      }
+    },
+    "time": {
+      "group_start": {
+        "name": "Plage horaire {group} Début"
+      },
+      "group_end": {
+        "name": "Plage horaire {group} Fin"
+      }
+    },
+    "button": {
+      "refresh_from_server": {
+        "name": "Récupérer les données actuelles du serveur"
+      }
     }
   },
   "config": {

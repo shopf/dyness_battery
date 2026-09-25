@@ -427,6 +427,56 @@
       "data_update_time": {
         "name": "Datumsstempel"
       }
+    },
+    "number": {
+      "base_power_limit": {
+        "name": "Leistungsgrenze"
+      },
+      "base_discharge_depth": {
+        "name": "Entladetiefe (DOD)"
+      },
+      "group_power": {
+        "name": "Zeitfenster {group} Leistung"
+      }
+    },
+    "select": {
+      "group_mode": {
+        "name": "Zeitfenster {group} Modus",
+        "state": {
+          "load_priority": "Lastpriorität",
+          "battery_priority": "Batteriepriorität",
+          "shutdown": "Stoppen"
+        }
+      },
+      "group_week": {
+        "name": "Zeitfenster {group} Wochentage",
+        "state": {
+          "all_days": "Alle Tage",
+          "weekdays": "Wochentage (Mo-Fr)",
+          "weekend": "Wochenende (Sa-So)"
+        }
+      }
+    },
+    "switch": {
+      "write_enabled": {
+        "name": "Schreiben aktiviert"
+      },
+      "group_enabled": {
+        "name": "Zeitfenster {group} aktiv"
+      }
+    },
+    "time": {
+      "group_start": {
+        "name": "Zeitfenster {group} Start"
+      },
+      "group_end": {
+        "name": "Zeitfenster {group} Ende"
+      }
+    },
+    "button": {
+      "refresh_from_server": {
+        "name": "Aktuelle Serverdaten abrufen"
+      }
     }
   },
   "config": {

@@ -1,0 +1,536 @@
+{
+  "entity": {
+    "sensor": {
+      "battery_soc": {
+        "name": "Estado de Carga"
+      },
+      "battery_power": {
+        "name": "Potência"
+      },
+      "battery_current": {
+        "name": "Corrente"
+      },
+      "last_update": {
+        "name": "Última Atualização"
+      },
+      "battery_capacity": {
+        "name": "Capacidade da Bateria"
+      },
+      "communication_status": {
+        "name": "Estado de Comunicação"
+      },
+      "firmware_version": {
+        "name": "Versão de Firmware"
+      },
+      "work_status": {
+        "name": "Estado de Trabalho"
+      },
+      "battery_status": {
+        "name": "Estado da Bateria"
+      },
+      "pack_voltage": {
+        "name": "Tensão do Pack"
+      },
+      "battery_soh": {
+        "name": "Estado de Saúde"
+      },
+      "temperature": {
+        "name": "Temperatura"
+      },
+      "temp_max": {
+        "name": "Temperatura Máxima"
+      },
+      "temp_min": {
+        "name": "Temperatura Mínima"
+      },
+      "cell_voltage_max": {
+        "name": "Tensão Máxima de Célula"
+      },
+      "cell_voltage_min": {
+        "name": "Tensão Mínima de Célula"
+      },
+      "cell_voltage_diff_mv": {
+        "name": "Dispersão de Tensão de Célula"
+      },
+      "charge_current_limit": {
+        "name": "Corrente Máxima de Carga"
+      },
+      "discharge_current_limit": {
+        "name": "Corrente Máxima de Descarga"
+      },
+      "energy_charge_day": {
+        "name": "Energia Carregada Hoje"
+      },
+      "energy_discharge_day": {
+        "name": "Energia Descarregada Hoje"
+      },
+      "energy_charge_total": {
+        "name": "Energia Carregada Total"
+      },
+      "energy_discharge_total": {
+        "name": "Energia Descarregada Total"
+      },
+      "cycle_count": {
+        "name": "Número de Ciclos"
+      },
+      "total_battery_capacity": {
+        "name": "Capacidade Total da Bateria"
+      },
+      "usable_kwh": {
+        "name": "Capacidade Utilizável"
+      },
+      "remaining_kwh": {
+        "name": "Energia Restante"
+      },
+      "temp_mosfet": {
+        "name": "Temperatura MOSFET"
+      },
+      "temp_bms_max": {
+        "name": "Temperatura Máxima BMS"
+      },
+      "temp_bms_min": {
+        "name": "Temperatura Mínima BMS"
+      },
+      "alarm_status_1": {
+        "name": "Estado de Alarme 1"
+      },
+      "alarm_status_2": {
+        "name": "Estado de Alarme 2"
+      },
+      "alarm_total": {
+        "name": "Estado de Alarme"
+      },
+      "module_soc": {
+        "name": "Estado de Carga"
+      },
+      "module_soh": {
+        "name": "Estado de Saúde"
+      },
+      "module_cycle_count": {
+        "name": "Número de Ciclos"
+      },
+      "module_cell_v_max": {
+        "name": "Tensão Máxima de Célula"
+      },
+      "module_cell_v_min": {
+        "name": "Tensão Mínima de Célula"
+      },
+      "module_cell_spread": {
+        "name": "Dispersão de Tensão de Célula"
+      },
+      "module_temp_bms": {
+        "name": "Temperatura BMS"
+      },
+      "module_temp_1": {
+        "name": "Temperatura de Célula 1"
+      },
+      "module_temp_2": {
+        "name": "Temperatura de Célula 2"
+      },
+      "module_voltage": {
+        "name": "Tensão"
+      },
+      "module_current": {
+        "name": "Corrente"
+      },
+      "module_alarm": {
+        "name": "Estado de Alarme"
+      },
+      "alarm_spread_v": {
+        "name": "Alarme: Dispersão de Tensão"
+      },
+      "alarm_spread_t": {
+        "name": "Alarme: Dispersão de Temperatura"
+      },
+      "alarm_insul": {
+        "name": "Alarme: Isolamento Baixo"
+      },
+      "alarm_afe": {
+        "name": "Alarme: Comunicação AFE"
+      },
+      "alarm_bms": {
+        "name": "Alarme: Comunicação BMS"
+      },
+      "alarm_sys": {
+        "name": "Alarme: Falha de Sistema"
+      },
+      "alarm_total_tower": {
+        "name": "Estado de Alarme"
+      },
+      "pv_power": {
+        "name": "Potência FV"
+      },
+      "pv_voltage": {
+        "name": "Tensão FV"
+      },
+      "pv_current": {
+        "name": "Corrente FV"
+      },
+      "out_energy_today": {
+        "name": "Energia de Saída FV Hoje"
+      },
+      "out_energy_total": {
+        "name": "Energia de Saída FV Total"
+      },
+      "load_power": {
+        "name": "Potência de Carga"
+      },
+      "grid_power": {
+        "name": "Potência da Rede"
+      },
+      "pv1_power": {
+        "name": "Potência String FV 1"
+      },
+      "pv2_power": {
+        "name": "Potência String FV 2"
+      },
+      "pv3_power": {
+        "name": "Potência String FV 3"
+      },
+      "pv_energy_today": {
+        "name": "Produção FV Hoje"
+      },
+      "load_energy_today": {
+        "name": "Consumo de Carga Hoje"
+      },
+      "grid_import_today": {
+        "name": "Importação da Rede Hoje"
+      },
+      "grid_export_today": {
+        "name": "Exportação da Rede Hoje"
+      },
+      "pv_energy_total": {
+        "name": "Produção FV Total"
+      },
+      "load_energy_total": {
+        "name": "Consumo de Carga Total"
+      },
+      "grid_import_total": {
+        "name": "Importação da Rede Total"
+      },
+      "grid_export_total": {
+        "name": "Exportação da Rede Total"
+      },
+      "temp_internal": {
+        "name": "Temperatura Interna do Inversor"
+      },
+      "temp_module": {
+        "name": "Temperatura do Módulo do Inversor"
+      },
+      "temp_heat_sink": {
+        "name": "Temperatura do Dissipador do Inversor"
+      },
+      "grid_status": {
+        "name": "Estado da Rede"
+      },
+      "run_model": {
+        "name": "Modo de Operação"
+      },
+      "inverter_work_status": {
+        "name": "Estado de Trabalho do Inversor"
+      },
+      "grid_voltage": {
+        "name": "Tensão da Rede"
+      },
+      "grid_current": {
+        "name": "Corrente da Rede"
+      },
+      "grid_frequency": {
+        "name": "Frequência da Rede"
+      },
+      "bus_voltage": {
+        "name": "Tensão do Barramento DC"
+      },
+      "pv1_voltage": {
+        "name": "Tensão String FV 1"
+      },
+      "pv2_voltage": {
+        "name": "Tensão String FV 2"
+      },
+      "pv3_voltage": {
+        "name": "Tensão String FV 3"
+      },
+      "pv1_current": {
+        "name": "Corrente String FV 1"
+      },
+      "pv2_current": {
+        "name": "Corrente String FV 2"
+      },
+      "pv3_current": {
+        "name": "Corrente String FV 3"
+      },
+      "alarm_text": {
+        "name": "Detalhes do Alarme"
+      },
+      "charge_voltage_limit": {
+        "name": "Limite de Tensão de Carga"
+      },
+      "discharge_voltage_limit": {
+        "name": "Limite de Tensão de Descarga"
+      },
+      "cell_v_max_module": {
+        "name": "Módulo com Tensão Máxima de Célula"
+      },
+      "cell_v_max_cell": {
+        "name": "Célula com Tensão Máxima"
+      },
+      "cell_v_min_module": {
+        "name": "Módulo com Tensão Mínima de Célula"
+      },
+      "cell_v_min_cell": {
+        "name": "Célula com Tensão Mínima"
+      },
+      "balancing_status": {
+        "name": "Estado de Balanceamento"
+      },
+      "installed_power": {
+        "name": "Potência FV Instalada"
+      },
+      "data_update_time": {
+        "name": "Marca Temporal dos Dados"
+      },
+      "module_cell_01": {
+        "name": "Cell 01"
+      },
+      "module_cell_02": {
+        "name": "Cell 02"
+      },
+      "module_cell_03": {
+        "name": "Cell 03"
+      },
+      "module_cell_04": {
+        "name": "Cell 04"
+      },
+      "module_cell_05": {
+        "name": "Cell 05"
+      },
+      "module_cell_06": {
+        "name": "Cell 06"
+      },
+      "module_cell_07": {
+        "name": "Cell 07"
+      },
+      "module_cell_08": {
+        "name": "Cell 08"
+      },
+      "module_cell_09": {
+        "name": "Cell 09"
+      },
+      "module_cell_10": {
+        "name": "Cell 10"
+      },
+      "module_cell_11": {
+        "name": "Cell 11"
+      },
+      "module_cell_12": {
+        "name": "Cell 12"
+      },
+      "module_cell_13": {
+        "name": "Cell 13"
+      },
+      "module_cell_14": {
+        "name": "Cell 14"
+      },
+      "module_cell_15": {
+        "name": "Cell 15"
+      },
+      "module_cell_16": {
+        "name": "Cell 16"
+      },
+      "module_cell_17": {
+        "name": "Cell 17"
+      },
+      "module_cell_18": {
+        "name": "Cell 18"
+      },
+      "module_cell_19": {
+        "name": "Cell 19"
+      },
+      "module_cell_20": {
+        "name": "Cell 20"
+      },
+      "module_cell_21": {
+        "name": "Cell 21"
+      },
+      "module_cell_22": {
+        "name": "Cell 22"
+      },
+      "module_cell_23": {
+        "name": "Cell 23"
+      },
+      "module_cell_24": {
+        "name": "Cell 24"
+      },
+      "module_cell_25": {
+        "name": "Cell 25"
+      },
+      "module_cell_26": {
+        "name": "Cell 26"
+      },
+      "module_cell_27": {
+        "name": "Cell 27"
+      },
+      "module_cell_28": {
+        "name": "Cell 28"
+      },
+      "module_cell_29": {
+        "name": "Cell 29"
+      },
+      "module_cell_30": {
+        "name": "Cell 30"
+      },
+      "cell_voltage_01": {
+        "name": "Cell 01"
+      },
+      "cell_voltage_02": {
+        "name": "Cell 02"
+      },
+      "cell_voltage_03": {
+        "name": "Cell 03"
+      },
+      "cell_voltage_04": {
+        "name": "Cell 04"
+      },
+      "cell_voltage_05": {
+        "name": "Cell 05"
+      },
+      "cell_voltage_06": {
+        "name": "Cell 06"
+      },
+      "cell_voltage_07": {
+        "name": "Cell 07"
+      },
+      "cell_voltage_08": {
+        "name": "Cell 08"
+      },
+      "cell_voltage_09": {
+        "name": "Cell 09"
+      },
+      "cell_voltage_10": {
+        "name": "Cell 10"
+      },
+      "cell_voltage_11": {
+        "name": "Cell 11"
+      },
+      "cell_voltage_12": {
+        "name": "Cell 12"
+      },
+      "cell_voltage_13": {
+        "name": "Cell 13"
+      },
+      "cell_voltage_14": {
+        "name": "Cell 14"
+      },
+      "cell_voltage_15": {
+        "name": "Cell 15"
+      },
+      "cell_voltage_16": {
+        "name": "Cell 16"
+      }
+    },
+    "number": {
+      "base_power_limit": {
+        "name": "Limite de potência"
+      },
+      "base_discharge_depth": {
+        "name": "Profundidade de descarga (DOD)"
+      },
+      "group_power": {
+        "name": "Janela horária {group} Potência"
+      }
+    },
+    "select": {
+      "group_mode": {
+        "name": "Janela horária {group} Modo",
+        "state": {
+          "load_priority": "Prioridade de consumo",
+          "battery_priority": "Prioridade de bateria",
+          "shutdown": "Desligado"
+        }
+      },
+      "group_week": {
+        "name": "Janela horária {group} Dias da semana",
+        "state": {
+          "all_days": "Todos os dias",
+          "weekdays": "Dias úteis (Seg-Sex)",
+          "weekend": "Fim de semana (Sáb-Dom)"
+        }
+      }
+    },
+    "switch": {
+      "write_enabled": {
+        "name": "Escrita ativada"
+      },
+      "group_enabled": {
+        "name": "Janela horária {group} ativa"
+      }
+    },
+    "time": {
+      "group_start": {
+        "name": "Janela horária {group} Início"
+      },
+      "group_end": {
+        "name": "Janela horária {group} Fim"
+      }
+    },
+    "button": {
+      "refresh_from_server": {
+        "name": "Obter dados atuais do servidor"
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "select_device": {
+        "title": "Dyness Battery – Selecionar Dispositivo",
+        "description": "Foram encontrados {count} dispositivos na sua conta. Selecione a bateria que deseja adicionar. Pode adicionar a integração novamente para configurar dispositivos adicionais.",
+        "data": {
+          "device_sn": "Dispositivo"
+        }
+      },
+      "user": {
+        "title": "Dyness Battery",
+        "description": "Introduza as suas credenciais da API Dyness. Selecione a sua região e o dispositivo será detetado automaticamente.",
+        "data": {
+          "api_id": "ID de API",
+          "api_secret": "Chave Secreta de API",
+          "region": "Região"
+        }
+      },
+      "manual": {
+        "title": "Dyness Battery – Configuração Manual",
+        "description": "Introduza as suas credenciais de API, região e números de série do dispositivo.",
+        "data": {
+          "api_id": "ID de API",
+          "api_secret": "Chave Secreta de API",
+          "region": "Região",
+          "device_sn": "SN da Bateria (ex. R07ABCDEF123456-BMS)",
+          "dongle_sn": "SN do Dongle (opcional)"
+        }
+      }
+    },
+    "error": {
+      "discovery_failed": "Não foi possível detetar o dispositivo automaticamente. Utilize a configuração manual.",
+      "device_not_found": "Dispositivo selecionado não encontrado. Por favor, tente novamente."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dyness Battery – Opções",
+        "description": "Configure o comportamento da integração.",
+        "data": {
+          "alarm_delay_minutes": "Atraso de notificação de alarme",
+          "battery_capacity_override": "Substituição de Capacidade da Bateria (kWh)"
+        },
+        "data_description": {
+          "alarm_delay_minutes": "Duração mínima que um alarme deve estar ativo antes de ser acionada uma notificação do Home Assistant. Use para suprimir eventos transitórios (ex. alarmes de balanceamento a 100% SOC).",
+          "battery_capacity_override": "Opcional. Introduza a capacidade física total da bateria em kWh para substituir o valor calculado pela API. Deixe vazio para cálculo automático."
+        }
+      }
+    },
+    "error": {
+      "invalid_capacity": "Introduza um número positivo (ex. 20.48) ou deixe vazio."
+    }
+  }
+}
