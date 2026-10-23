@@ -42,8 +42,8 @@ WRITE_COOLDOWN_SECONDS = 900  # ...sonst 15 Minuten Sperre + Auto-Deaktivierung
 _FIXED_WORK_MODE = "3"  # wirkungsloser Platzhalter
 VALID_WORK_MODES = {"0", "1", "3", "6"}
 
-DOD_MIN = 20
-DOD_MAX = 100
+DOD_MIN = 0
+DOD_MAX = 80
 
 POWER_LIMIT_MIN = 152
 POWER_LIMIT_MAX = 800
@@ -856,7 +856,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         work_mode: laut PDF Pflichtfeld ("0"/"1"/"3"/"6"), auf der Junior Box
                    aber bestätigt wirkungslos — wird nur strukturell benötigt.
         power_limit: Leistung in W (152-800, App-Limit)
-        discharge_depth: Entladetiefe in % (20-100, App-Limit)
+        discharge_depth: Entladetiefe in % (0-80, App-Limit)
         """
         await self._guard_check_and_record()
         if str(work_mode) not in VALID_WORK_MODES:
@@ -1335,19 +1335,34 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                                 self._persist_module_sns(_entry, _merged)
                                             )
                                 elif candidates and not self._module_sns:
-                                    # Einzelnes Sub-Modul — kein separates Device,
-                                    # aber Zellspannungen via direktem v1-Call.
-                                    # Nicht persistiert: wird nach dem ersten Poll
-                                    # zuverlässig aus SUB gesetzt, Persistenz würde
-                                    # async_update_entry aus _async_update_data
-                                    # heraus erfordern.
                                     sn = candidates[0]
-                                    if self._single_sub_sn != sn:
-                                        self._single_sub_sn = sn
-                                        _LOGGER.debug(
-                                            "Dyness: Einzelnes Sub-Modul erkannt: %s "
-                                            "(Zellspannungen via direktem Abruf)", sn,
+                                    # Point 400 = Anzahl tatsächlich vorhandener Batterien
+                                    # laut BMS-Master. Wenn Point 400 > 1 aber SUB nur 1
+                                    # Kandidat zurückgibt, ist die API-Antwort unvollständig.
+                                    # In diesem Fall NICHT _single_sub_sn setzen — stattdessen
+                                    # als potentielles Multi-Modul-System vormerken und auf
+                                    # den nächsten Poll mit vollständiger SUB-Liste warten.
+                                    _expected_batt = int(float(
+                                        self.realtime_data.get("400") or 1
+                                    ))
+                                    if _expected_batt > 1:
+                                        # Unvollständige SUB-Liste — Union vorbereiten
+                                        self._module_sns = [sn]
+                                        self._update_scan_interval()
+                                        _LOGGER.warning(
+                                            "Dyness: SUB lieferte 1 Modul aber Point 400=%d "
+                                            "→ warte auf vollständige Liste (Bootstrap-Fluke)",
+                                            _expected_batt,
                                         )
+                                    else:
+                                        # Echtes Einzelmodul — kein separates Device,
+                                        # Zellspannungen via direktem v1-Call
+                                        if self._single_sub_sn != sn:
+                                            self._single_sub_sn = sn
+                                            _LOGGER.debug(
+                                                "Dyness: Einzelnes Sub-Modul erkannt: %s "
+                                                "(Zellspannungen via direktem Abruf)", sn,
+                                            )
                         else:
                             _LOGGER.debug(
                                 "Dyness realTime/data: Code %s – %s",
@@ -1622,12 +1637,12 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["balancingStatus"] = str(bal) != "0"
 
                         # Alarm-Bits
-                        data["alarmSpreadV"] = str(rt.get("5001", "0")) == "1"
-                        data["alarmSpreadT"] = str(rt.get("5002", "0")) == "1"
-                        data["alarmInsul"]   = str(rt.get("5003", "0")) == "1"
-                        data["alarmAfe"]     = str(rt.get("5101", "0")) == "1"
-                        data["alarmBms"]     = str(rt.get("5102", "0")) == "1"
-                        data["alarmSys"]     = str(rt.get("5104", "0")) == "1"
+                        data["alarmSpreadV"] = int(str(rt.get("5001", "0")) == "1")
+                        data["alarmSpreadT"] = int(str(rt.get("5002", "0")) == "1")
+                        data["alarmInsul"]   = int(str(rt.get("5003", "0")) == "1")
+                        data["alarmAfe"]     = int(str(rt.get("5101", "0")) == "1")
+                        data["alarmBms"]     = int(str(rt.get("5102", "0")) == "1")
+                        data["alarmSys"]     = int(str(rt.get("5104", "0")) == "1")
                         data["alarmTotal"]   = rt.get("9999999")
 
                         _LOGGER.debug(
@@ -1779,24 +1794,72 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         # Tower T14: Alarm-Bits direkt (5001-5104)
                         if rt.get("4400") is not None:
                             # Tower Pro TP7 Alarm-Schema
-                            data["alarmSpreadV"] = str(rt.get("4402", "0")) == "1"  # Einzelzellspannung zu hoch - Alarm Stufe 1
-                            data["alarmSpreadT"] = str(rt.get("4403", "0")) == "1"  # Ladetemperatur zu hoch - Alarm Stufe 1
-                            data["alarmInsul"]   = False  # TP7 hat keinen separaten Isolationsfehler-Bit
-                            data["alarmAfe"]     = False
-                            data["alarmBms"]     = False
-                            data["alarmSys"]     = False
+                            data["alarmSpreadV"] = int(str(rt.get("4402", "0")) == "1")  # Einzelzellspannung zu hoch - Alarm Stufe 1
+                            data["alarmSpreadT"] = int(str(rt.get("4403", "0")) == "1")  # Ladetemperatur zu hoch - Alarm Stufe 1
+                            data["alarmInsul"]   = 0  # TP7 hat keinen separaten Isolationsfehler-Bit
+                            data["alarmAfe"]     = 0
+                            data["alarmBms"]     = 0
+                            data["alarmSys"]     = 0
                             # Gesamtalarm: irgendein Flag-Register ≠ 0
                             flags = [rt.get(str(f), "0") for f in [4400, 4500, 4600, 4700, 4800, 4900]]
                             data["alarmTotal"] = str(int(any(str(f) != "0" for f in flags)))
                         else:
                             # Tower T14 Alarm-Schema
-                            data["alarmSpreadV"]  = str(rt.get("5001", "0")) == "1"
-                            data["alarmSpreadT"]  = str(rt.get("5002", "0")) == "1"
-                            data["alarmInsul"]    = str(rt.get("5003", "0")) == "1"
-                            data["alarmAfe"]      = str(rt.get("5101", "0")) == "1"
-                            data["alarmBms"]      = str(rt.get("5102", "0")) == "1"
-                            data["alarmSys"]      = str(rt.get("5104", "0")) == "1"
+                            data["alarmSpreadV"]  = int(str(rt.get("5001", "0")) == "1")
+                            data["alarmSpreadT"]  = int(str(rt.get("5002", "0")) == "1")
+                            data["alarmInsul"]    = int(str(rt.get("5003", "0")) == "1")
+                            data["alarmAfe"]      = int(str(rt.get("5101", "0")) == "1")
+                            data["alarmBms"]      = int(str(rt.get("5102", "0")) == "1")
+                            data["alarmSys"]      = int(str(rt.get("5104", "0")) == "1")
                             data["alarmTotal"]    = rt.get("9999999")
+
+                        # workStatus: v1 storage/list liefert für alle Tower-Varianten
+                        # falsche Werte während aktivem Betrieb (z.B. "Fault" beim Laden,
+                        # "Standby" beim Entladen. v1 Point 4000 ist ebenfalls unzuverlässig
+                        # (immer 0). v2 GetRealTimeDataBySN.batteryStatus ist die verlässliche
+                        # Quelle (0/1=Standby, 2=Discharging, 3=Charging) — bei allen Tower-
+                        # Modellen verfügbar wenn v2 grundsätzlich unterstützt wird.
+                        # Fallback: v1 storage/list-Wert bleibt erhalten.
+                        try:
+                            _v2_tower = await self._call(
+                                session,
+                                "/v2/GetRealTimeDataBySN",
+                                {"deviceSn": self.device_sn},
+                            )
+                            if _is_success(_v2_tower):
+                                _bs_raw = (_v2_tower.get("data") or {}).get("batteryStatus")
+                                if _bs_raw is not None:
+                                    _TOWER_STATUS = {
+                                        0: "Standby",
+                                        1: "Standby",
+                                        2: "Discharging",
+                                        3: "Charging",
+                                    }
+                                    _bs_mapped = _TOWER_STATUS.get(int(_bs_raw))
+                                    if _bs_mapped is not None:
+                                        data["workStatus"] = _bs_mapped
+                                        _LOGGER.debug(
+                                            "Dyness Tower: workStatus aus v2 batteryStatus=%s → %s",
+                                            _bs_raw, _bs_mapped,
+                                        )
+                                    else:
+                                        _LOGGER.warning(
+                                            "Dyness Tower: unbekannter v2 batteryStatus-Wert %s "
+                                            "— v1-Wert '%s' wird beibehalten",
+                                            _bs_raw, data.get("workStatus"),
+                                        )
+                            else:
+                                _LOGGER.debug(
+                                    "Dyness Tower: v2 GetRealTimeDataBySN nicht verfügbar "
+                                    "— workStatus aus v1 storage/list: %s",
+                                    data.get("workStatus"),
+                                )
+                        except Exception as _tower_v2_err:  # noqa: BLE001
+                            _LOGGER.debug(
+                                "Dyness Tower: v2-Statusabfrage fehlgeschlagen (%s) "
+                                "— workStatus aus v1 storage/list: %s",
+                                _tower_v2_err, data.get("workStatus"),
+                            )
 
                     elif schema == SCHEMA_POWERBOX_G2:
                         # PowerBox G2 Schema — zwei API-Varianten bekannt:
@@ -2062,10 +2125,10 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             str(rt.get("3200", "0")) != "0"
                             or str(rt.get("3300", "0")) != "0"
                         )
-                        data["alarmSpreadV"] = str(rt.get("3201", "0")) != "0"
-                        data["alarmSpreadT"] = str(rt.get("3202", "0")) != "0"
-                        data["alarmAfe"]     = str(rt.get("3400", "0")) != "0"
-                        data["alarmSys"]     = str(rt.get("3500", "0")) != "0"
+                        data["alarmSpreadV"] = int(str(rt.get("3201", "0")) != "0")
+                        data["alarmSpreadT"] = int(str(rt.get("3202", "0")) != "0")
+                        data["alarmAfe"]     = int(str(rt.get("3400", "0")) != "0")
+                        data["alarmSys"]     = int(str(rt.get("3500", "0")) != "0")
 
                         _LOGGER.debug(
                             "Dyness PowerDepot G2: n_modules=%s, batteryCapacity=%s kWh, "
@@ -2082,18 +2145,15 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         #
                         # Erkennung: Point 600 vorhanden → Variante A, sonst Variante B
                         #
-                        # batteryCapacity: bc_single × Modulanzahl (Point 400)
-                        bc_pb    = _to_float(self.station_info.get("batteryCapacity"))
-                        n_mod_pb = _to_float(rt.get("400"))
+                        # batteryCapacity: station_info liefert für PowerBrick bereits
+                        # die GESAMTKAPAZITÄT des Systems — NICHT mit Modulanzahl multiplizieren.
+                        bc_pb = _to_float(self.station_info.get("batteryCapacity"))
                         if bc_pb is not None:
-                            if n_mod_pb is not None and n_mod_pb > 1:
-                                data["batteryCapacity"] = round(bc_pb * int(n_mod_pb), 3)
-                                _LOGGER.debug(
-                                    "Dyness PowerBrick: batteryCapacity %s × %d Module = %s kWh",
-                                    bc_pb, int(n_mod_pb), data["batteryCapacity"]
-                                )
-                            else:
-                                data["batteryCapacity"] = bc_pb
+                            data["batteryCapacity"] = bc_pb
+                            _LOGGER.debug(
+                                "Dyness PowerBrick: batteryCapacity = %s kWh (direkt aus station_info)",
+                                bc_pb
+                            )
 
                         _pb_var_a = rt.get("600") is not None and rt.get("600") != ""
 
@@ -2120,14 +2180,14 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["tempBmsMin"]           = rt.get("3000")
                             data["alarmStatus1"]         = rt.get("3200")
                             data["alarmStatus2"]         = rt.get("3300")
-                            data["alarmSpreadV"] = str(rt.get("3201", "0")) != "0"
-                            data["alarmSpreadT"] = str(rt.get("3202", "0")) != "0"
-                            data["alarmInsul"]   = str(rt.get("3205", "0")) != "0"
-                            data["alarmAfe"]     = str(rt.get("3203", "0")) != "0"
-                            data["alarmBms"]     = str(rt.get("3204", "0")) != "0"
+                            data["alarmSpreadV"] = int(str(rt.get("3201", "0")) != "0")
+                            data["alarmSpreadT"] = int(str(rt.get("3202", "0")) != "0")
+                            data["alarmInsul"]   = int(str(rt.get("3205", "0")) != "0")
+                            data["alarmAfe"]     = int(str(rt.get("3203", "0")) != "0")
+                            data["alarmBms"]     = int(str(rt.get("3204", "0")) != "0")
                             # Point 4100 = total alarm status (primäre Alarmquelle).
                             # Points 3206/3207/3208 sind Top-Charge-Warnflags (kein echter Fehler)
-                            data["alarmSys"]     = str(rt.get("4100", "0")) != "0"
+                            data["alarmSys"]     = int(str(rt.get("4100", "0")) != "0")
                             cc_pb = rt.get("900")
                             if cc_pb is not None and str(cc_pb).strip() not in ("", "0"):
                                 data["cycleCount"] = cc_pb
@@ -2232,6 +2292,31 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     data[f"cellVoltage{i:02d}"] = v
                             if cells_pb:
                                 data["cellVoltageDiffMv"] = round((max(cells_pb) - min(cells_pb)) * 1000, 1)
+
+                            # cycleCount: Variante A liest Point 900 vom Master.
+                            # Bei 2+ Modulen fehlt dieser oft → aus module_data aggregieren.
+                            if data.get("cycleCount") is None and self.module_data:
+                                mod_cycles = [
+                                    _to_float(m.get("cycle_count"))
+                                    for m in self.module_data.values()
+                                    if m.get("cycle_count") is not None
+                                ]
+                                if mod_cycles:
+                                    data["cycleCount"] = round(
+                                        sum(mod_cycles) / len(mod_cycles), 0
+                                    )
+
+                            # tempMax/tempMin: Master liefert Points 1800/2000.
+                            # Bei 2+ Modulen: Aggregation aus module_data als Fallback.
+                            if data.get("tempMax") is None and self.module_data:
+                                mod_bms_temps = [
+                                    _to_float(m.get("bms_temp"))
+                                    for m in self.module_data.values()
+                                    if m.get("bms_temp") is not None
+                                ]
+                                if mod_bms_temps:
+                                    data["tempMax"] = max(mod_bms_temps)
+                                    data["tempMin"] = min(mod_bms_temps) if len(mod_bms_temps) > 1 else None
 
                             # Single-Sub-Modul-Poll: self._single_sub_sn gesetzt
                             # wenn genau 1 SUB erkannt — Master hat keine Einzelzellen.
@@ -2912,6 +2997,8 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
         d["bms_temp"]    = _to_float(g("12400"))
         d["cell_temp_1"] = _to_float(g("12500"))
         d["cell_temp_2"] = _to_float(g("12600"))
+        d["cell_temp_3"] = _to_float(g("12700"))
+        d["cell_temp_4"] = _to_float(g("12800"))
         d["voltage"]     = _to_float(g("13500"))
         d["current"]     = _to_float(g("13400"))
         # Firmware per Sub-Modul (Point 10100) — PowerBox G2 hat zwei verschiedene Versionen

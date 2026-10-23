@@ -73,13 +73,13 @@ class DynessPowerLimitNumber(DynessDeviceInfoMixin, CoordinatorEntity, NumberEnt
 
 
 class DynessDischargeDepthNumber(DynessDeviceInfoMixin, CoordinatorEntity, NumberEntity):
-    """Entladetiefe (DOD): 20-100%, keine Schrittweiten-Beschränkung bekannt."""
+    """Entladetiefe (DOD): 0-80%, identisch zur Dyness-App."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "base_discharge_depth"
     _attr_mode = NumberMode.BOX
-    _attr_native_min_value = 20
-    _attr_native_max_value = 100
+    _attr_native_min_value = 0
+    _attr_native_max_value = 80
     _attr_native_step = 1
     _attr_native_unit_of_measurement = "%"
 

@@ -322,6 +322,8 @@ MODULE_SENSORS = [
     ("bms_temp",              "module_temp_bms",      UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
     ("cell_temp_1",           "module_temp_1",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
     ("cell_temp_2",           "module_temp_2",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
+    ("cell_temp_3",           "module_temp_3",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
+    ("cell_temp_4",           "module_temp_4",        UnitOfTemperature.CELSIUS,    SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT,      "mdi:thermometer",            None),
     ("voltage",               "module_voltage",       UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,     SensorStateClass.MEASUREMENT,      "mdi:sine-wave",              3),
     ("current",               "module_current",       UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT,     SensorStateClass.MEASUREMENT,      "mdi:current-dc",             None),
     ("has_alarm",             "module_alarm",         None,                         None,                          None,                              "mdi:alert-circle",           None),

@@ -127,6 +127,12 @@
       "module_temp_2": {
         "name": "Temperatura de Célula 2"
       },
+      "module_temp_3": {
+        "name": "Temperatura de Célula 3"
+      },
+      "module_temp_4": {
+        "name": "Temperatura de Célula 4"
+      },
       "module_voltage": {
         "name": "Tensão"
       },
