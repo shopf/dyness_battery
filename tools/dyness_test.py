@@ -1,54 +1,31 @@
 """
-Dyness API Tester v4.2
-Testet v1 (inkl. neu entdeckter Endpunkte aus offizieller Swagger-Doku)
-UND v2 (neue API) für alle Dyness Geräteserien.
+Dyness API Tester v4.3 — testet v1 + v2 für alle Dyness-Geräteserien.
 
-Neu in v4.2 (v2-only Geräte, z.B. DYNE 8.0L-1P-A / Dyness LV):
-  - Auto-Discovery Fallback: wenn v1 /v1/device/storage/list 0 Geräte
-    liefert, wird automatisch /v2/GetDeviceList als Discovery-Quelle
-    genutzt (v2-only Geräte erscheinen dort, aber NICHT in v1 storage/list)
-  - SN-Kandidaten: GetDeviceList liefert ggf. mehrere SN-Schreibweisen
-    pro physischem Gerät (z.B. mit/ohne -BMS-Suffix) — alle werden
-    systematisch für GetDeviceInfBySN durchprobiert statt nur 2 Varianten
-  - print_summary erkennt "v2-only"-Muster und gibt klare Diagnose aus
-  - Neue Flag-Variable v2_only_device fuer Downstream-Logik
-
-Neu in v4.1 (aus Swagger-Dokumentation):
-  - /v1/device/getBindDeviceSnListByCurrentUserId  (GET, einfacher Discovery-Call)
-  - /v1/device/houseHold/list   (liefert masterSlaveStatus + parentCode — Issue #31)
-  - /v1/storage/detail          (GET, kompakte Alternative zu household/storage/detail)
-  - /v1/device/getEnergyDataBySn (Energie-Zähler Tag/Gesamt)
-  - /v1/alarm/query  FIX: korrekter Body mit deviceSnList (Array) statt deviceSn
-  - GET-Endpunkte korrekt implementiert: kein JSON-Body, Query-Params,
-    Signatur-String-Methode "GET" statt "POST" (vorher fälschlich als POST
-    mit leeren/fehlenden Pflichtfeldern aufgerufen -> HTTP 500)
-
-Geräteserien mit v2-Dokumentation:
-  - Low-voltage battery (DL5, PowerDepot G2, PowerBox G2, Junior Box)
-  - High-voltage battery (Tower, Stack100, PowerBox Pro)
-  - Cygni HA/HS (Hybrid-Wechselrichter)
-  - HT-A / LS Series (All-in-One Systeme)
-  - AquaVolt / AquaVolt_LV / SolarCube
-
-Verwendung:
-    pip install requests
-    python3 dyness_test.py
-
-Bitte Output als Issue auf GitHub teilen!
-https://github.com/shopf/dyness_battery
+Verwendung:   pip install requests   ->   python3 dyness_test.py
+Aenderungen:  siehe CHANGELOG.md
+Ergebnis bitte als Issue teilen: https://github.com/shopf/dyness_battery
 """
+
+# ==============================================================
+#  HIER DEINE ZUGANGSDATEN EINTRAGEN  (nur diese 2 Zeilen!)
+# ==============================================================
+API_ID     = "DEINE_API_ID"
+API_SECRET = "DEIN_API_SECRET"
+# Alles Weitere ist optional. Nicht in Europa? Dann weiter unten bei
+# "REGION" API_BASE_V1 / API_BASE_V2 anpassen.
+# ==============================================================
 
 import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-import hashlib, hmac, base64, json, re, requests
+import hashlib, hmac, base64, json, re, time, atexit, requests
+from datetime import datetime, timezone
 from email.utils import formatdate
 
-# ===== HIER DEINE ZUGANGSDATEN EINTRAGEN =====
-API_ID     = "DEINE_API_ID"
-API_SECRET = "DEIN_API_SECRET"
+SCRIPT_VERSION = "4.3"
 
+# ===== REGION (in Europa nichts ändern) =====
 # Wähle deine Region für v1 (nur eine Zeile einkommentieren):
 API_BASE_V1 = "https://open-api.dyness.com/openapi/ems-device"         # Europa v1 (Standard)
 # API_BASE_V1 = "https://apacopen-api.dyness.com/openapi/ems-device"   # Asia-Pacific v1
@@ -67,6 +44,12 @@ API_BASE_V2 = "https://eu-openapi.dyness.com/openapi/ems-device"        # Europa
 # Optional: Wenn Auto-Discovery fehlschlägt
 DEVICE_SN = ""
 DONGLE_SN = ""
+
+# ===== OPTIONEN (normalerweise nicht ändern) =====
+CALL_DELAY    = 2.0    # Mindestabstand zwischen zwei API-Calls in Sekunden (Rate-Limit-Schutz)
+MAX_RETRIES   = 4      # Wiederholungen pro Call bei HTTP 429
+RETRY_BACKOFF = 3.0    # Wartezeit vor Retry: 3 s, 6 s, 12 s, 24 s ...
+ANONYMIZE     = True   # True: SNs maskieren, Stationsname/Standort/Bild-URL entfernen
 # =============================================
 
 SEP  = "=" * 60
@@ -86,23 +69,117 @@ def get_signature(secret: str, method: str, content_md5: str, date: str, path: s
     ).decode("utf-8")
 
 
-def _post(base_url: str, path: str, body_dict: dict) -> dict:
-    date = formatdate(timeval=None, localtime=False, usegmt=True)
-    body = json.dumps(body_dict, separators=(',', ':'), sort_keys=True)
-    md5  = get_md5(body)
-    sig  = get_signature(API_SECRET, "POST", md5, date, path)
-    headers = {
-        "Content-Type": "application/json;charset=UTF-8",
-        "Content-MD5":  md5,
-        "Date":         date,
-        "Authorization": f"API {API_ID}:{sig}",
-    }
+# ── Zähler / Registry ────────────────────────────────────────────────────────
+STATS = {"calls": 0, "rate_limited": 0, "rate_limited_final": 0, "empty": 0, "errors": 0}
+_LAST_CALL = [0.0]
+_SNS = set()   # alle bisher gesehenen Seriennummern (für ANONYMIZE)
+
+_SN_POINTS = {"SUB", "310", "10001", "10010", "10150"}
+_SN_SUFFIX_RE = re.compile(r"(-(?:BMS|BDU|INV|EMS)|-BDU-\d+|-\d{2})$")
+
+
+def _strip_sn_suffix(sn: str) -> str:
+    """Entfernt ein Modul-/Gerätesuffix (-BMS, -BDU, -NN) von einer SN."""
+    return _SN_SUFFIX_RE.sub("", sn or "")
+
+
+def _register_sn(v):
+    if not isinstance(v, str):
+        return
+    for part in v.split(","):
+        part = part.strip()
+        if len(part) >= 10 and " " not in part:
+            _SNS.add(part)
+            base = _strip_sn_suffix(part)
+            if len(base) >= 10:
+                _SNS.add(base)
+
+
+def _scan_sns(obj):
+    """Sammelt SNs aus einer API-Antwort (Keys ...Sn sowie SN-Points)."""
+    if isinstance(obj, dict):
+        if obj.get("pointId") in _SN_POINTS and "pointValue" in obj:
+            _register_sn(obj["pointValue"])
+        for k, v in obj.items():
+            if isinstance(k, str) and k.lower().endswith("sn") and isinstance(v, str):
+                _register_sn(v)
+            elif isinstance(v, (dict, list)):
+                _scan_sns(v)
+    elif isinstance(obj, list):
+        for x in obj:
+            _scan_sns(x)
+
+
+def _throttle():
+    wait = CALL_DELAY - (time.monotonic() - _LAST_CALL[0])
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_CALL[0] = time.monotonic()
+
+
+def _is_rate_limited(res: dict) -> bool:
+    return (str(res.get("code")) == "429" or res.get("_http_status") == 429
+            or str(res.get("sourceCode", "")).upper() == "TOO_MANY_REQUESTS")
+
+
+def _decode(r) -> dict:
+    """HTTP-Antwort -> dict. Leere/ungültige Antworten werden markiert."""
     try:
-        r = requests.post(f"{base_url}{path}", headers=headers,
-                          data=body.encode("utf-8"), timeout=15)
-        return r.json()
-    except Exception as e:
-        return {"error": str(e), "code": "ERR"}
+        j = r.json()
+    except Exception:
+        STATS["empty"] += 1
+        text = (r.text or "")
+        j = {"code": str(r.status_code), "info": text[:300],
+             "_empty_response": not text.strip()}
+    if not isinstance(j, dict):
+        j = {"code": "ERR", "info": "unerwartetes JSON-Format", "data": j}
+    j["_http_status"] = r.status_code
+    _scan_sns(j)
+    return j
+
+
+def _with_retry(label: str, once) -> dict:
+    """Führt einen Call mit Mindestabstand aus; wiederholt bei HTTP 429."""
+    res = {}
+    for attempt in range(MAX_RETRIES + 1):
+        _throttle()
+        STATS["calls"] += 1
+        res = once()
+        if _is_rate_limited(res):
+            STATS["rate_limited"] += 1
+            if attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                print(f"  ⏳ 429 TOO_MANY_REQUESTS ({label}) — warte {wait:.0f}s, "
+                      f"Versuch {attempt + 2}/{MAX_RETRIES + 1}")
+                time.sleep(wait)
+                continue
+            STATS["rate_limited_final"] += 1
+        break
+    return res
+
+
+def _post(base_url: str, path: str, body_dict: dict) -> dict:
+    body = json.dumps(body_dict, separators=(',', ':'), sort_keys=True)
+
+    def once():
+        date = formatdate(timeval=None, localtime=False, usegmt=True)  # pro Versuch neu
+        md5  = get_md5(body)
+        sig  = get_signature(API_SECRET, "POST", md5, date, path)
+        headers = {
+            "Content-Type": "application/json;charset=UTF-8",
+            "Content-MD5":  md5,
+            "Date":         date,
+            "Authorization": f"API {API_ID}:{sig}",
+        }
+        try:
+            r = requests.post(f"{base_url}{path}", headers=headers,
+                              data=body.encode("utf-8"), timeout=15)
+        except Exception as e:
+            STATS["errors"] += 1
+            return {"error": str(e), "code": "ERR", "_http_status": None}
+        return _decode(r)
+
+    return _with_retry(path, once)
 
 
 def _get(base_url: str, path: str, query_params: dict, sign_with_query: bool = False) -> dict:
@@ -114,31 +191,32 @@ def _get(base_url: str, path: str, query_params: dict, sign_with_query: bool = F
     sign_with_query=True:  canonical resource = Pfad + "?" + sortierter Query-String
                             (üblich bei Aliyun-artigen Signaturschemata für GET)
 
-    Wir wissen noch nicht, welche Variante Dyness erwartet — bei 401 ACCESS_DENIED
-    auf Variante A probiert das Script automatisch Variante B (siehe api_v1_get).
+    Bei 401 ACCESS_DENIED auf Variante A probiert api_v1_get automatisch Variante B.
     """
-    date = formatdate(timeval=None, localtime=False, usegmt=True)
-    md5  = get_md5("")  # GET hat keinen Body -> MD5 des leeren Strings
+    def once():
+        date = formatdate(timeval=None, localtime=False, usegmt=True)
+        md5  = get_md5("")  # GET hat keinen Body -> MD5 des leeren Strings
+        if sign_with_query and query_params:
+            qs = "&".join(f"{k}={query_params[k]}" for k in sorted(query_params))
+            canonical_path = f"{path}?{qs}"
+        else:
+            canonical_path = path
+        sig = get_signature(API_SECRET, "GET", md5, date, canonical_path)
+        headers = {
+            "Content-Type": "application/json;charset=UTF-8",
+            "Content-MD5":  md5,
+            "Date":         date,
+            "Authorization": f"API {API_ID}:{sig}",
+        }
+        try:
+            r = requests.get(f"{base_url}{path}", headers=headers,
+                             params=query_params, timeout=15)
+        except Exception as e:
+            STATS["errors"] += 1
+            return {"error": str(e), "code": "ERR", "_http_status": None}
+        return _decode(r)
 
-    if sign_with_query and query_params:
-        qs = "&".join(f"{k}={query_params[k]}" for k in sorted(query_params))
-        canonical_path = f"{path}?{qs}"
-    else:
-        canonical_path = path
-
-    sig = get_signature(API_SECRET, "GET", md5, date, canonical_path)
-    headers = {
-        "Content-Type": "application/json;charset=UTF-8",
-        "Content-MD5":  md5,
-        "Date":         date,
-        "Authorization": f"API {API_ID}:{sig}",
-    }
-    try:
-        r = requests.get(f"{base_url}{path}", headers=headers,
-                         params=query_params, timeout=15)
-        return r.json()
-    except Exception as e:
-        return {"error": str(e), "code": "ERR"}
+    return _with_retry(path, once)
 
 
 def api_v1(path, body): return _post(API_BASE_V1, path, body)
@@ -167,6 +245,234 @@ def is_ok(result: dict) -> bool:
         return False
     code = str(result.get("code", ""))
     return code in ("0", "200") or result.get("code") == 0
+
+
+# ── Diagnose-Helfer (v4.3) ────────────────────────────────────────────────────
+DIAG = {"v1_work_status": None, "model_raw": None, "v2": None, "v1_modules": []}
+
+
+def _num(v):
+    """Zahl aus Wert mit optionaler Einheit ('3.345V', '15.5°C', '-3.18') — sonst None."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.match(r"^\s*(-?\d+(?:\.\d+)?)", str(v))
+    return float(m.group(1)) if m else None
+
+
+def _capture_v2_quality(batt: dict):
+    cl = batt.get("cellVoltageList") or []
+    tl = batt.get("cellTempList") or []
+    mods = []
+    for m in (batt.get("bmsInfoList") or []):
+        if not isinstance(m, dict):
+            continue
+        mc = m.get("cellVoltageList") or []
+        mt = m.get("cellTempList") or []
+        mods.append({
+            "sn": m.get("bmsSn"),
+            "cells": len(mc), "cells_expected": _num(m.get("singleVoltageCount")),
+            "temps": len(mt), "temps_nonzero": sum(1 for t in mt if (_num(t) or 0) != 0),
+            "temps_expected": _num(m.get("singleTemperatureCount")),
+        })
+    DIAG["v2"] = {
+        "status": batt.get("batteryStatus"), "current": _num(batt.get("batteryCurrent")),
+        "cells": len(cl), "cells_expected": _num(batt.get("singleVoltageCount")),
+        "temps": len(tl), "temps_nonzero": sum(1 for t in tl if (_num(t) or 0) != 0),
+        "temps_expected": _num(batt.get("singleTemperatureCount")),
+        "modules": mods,
+    }
+
+
+def _note_v1_module(sn, res, pts, derived=False):
+    # Zellspannungen sind Dezimalwerte (z.B. "3.265"); Ganzzahlen wie die Modulnummer
+    # in Point 11000 ("02") werden bewusst nicht mitgezählt.
+    cells = [p for p in range(10300, 14101, 100)
+             if re.match(r"^\d\.\d+$", str(pts.get(str(p)) or "").strip())
+             and 2.0 <= float(str(pts.get(str(p))).strip()) <= 4.5]
+    DIAG["v1_modules"].append({
+        "sn": sn, "ok": bool(pts) and is_ok(res), "points": len(pts), "cells": len(cells),
+        "derived": derived, "empty": bool(res.get("_empty_response")),
+        "http": res.get("_http_status"), "code": res.get("code"),
+        "info": str(res.get("info") or ""),
+    })
+
+
+# ── Anonymisierung (stdout-Filter) ────────────────────────────────────────────
+_PII = (r"stationName|stationId|position|imgAddress|imageUrl|address|latitude|"
+        r"longitude|ownerName|userName|nickName|email|phone|mobile")
+_RE_PII_JSON = re.compile(r'("(?:%s)"\s*:\s*)(?:"[^"]*"|-?[\d.]+)' % _PII)
+_RE_PII_KV   = re.compile(r'^(\s*(?:%s)\s*=\s*)(\S.*?)(\s{2,}\(.*)?$' % _PII)
+_SN_CACHE = {"n": -1, "sorted": []}
+
+
+def _mask_sn(sn: str) -> str:
+    m = _SN_SUFFIX_RE.search(sn)
+    suf = m.group(1) if m else ""
+    base = sn[:len(sn) - len(suf)] if suf else sn
+    if len(base) <= 8:
+        return "x" * len(base) + suf
+    return base[:4] + "x" * (len(base) - 8) + base[-4:] + suf
+
+
+def _anon_line(line: str) -> str:
+    if not ANONYMIZE:
+        return line
+    if _SN_CACHE["n"] != len(_SNS):
+        _SN_CACHE["n"] = len(_SNS)
+        _SN_CACHE["sorted"] = sorted(_SNS, key=len, reverse=True)
+    for sn in _SN_CACHE["sorted"]:
+        if sn in line:
+            line = line.replace(sn, _mask_sn(sn))
+    line = _RE_PII_JSON.sub(r'\1"<entfernt>"', line)
+    m = _RE_PII_KV.match(line)
+    if m:
+        line = m.group(1) + "<entfernt>" + (m.group(3) or "")
+    return line
+
+
+class _AnonWriter:
+    """Zeilenweiser Filter vor stdout — maskiert SNs und entfernt Stationsdaten."""
+    def __init__(self, inner):
+        self._inner = inner
+        self._buf = ""
+
+    def write(self, text):
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._inner.write(_anon_line(line) + "\n")
+        return len(text)
+
+    def flush(self):
+        if self._buf:
+            self._inner.write(_anon_line(self._buf))
+            self._buf = ""
+        self._inner.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _install_anonymizer():
+    if ANONYMIZE and not isinstance(sys.stdout, _AnonWriter):
+        sys.stdout = _AnonWriter(sys.stdout)
+        atexit.register(sys.stdout.flush)
+
+
+def _verdict_count(got, expected, what, listed=None):
+    """Bewertet gelieferte vs. erwartete Anzahl (Zellen/Temperaturen).
+    listed = Länge der gelieferten Liste (bei Temperaturen: inkl. Nullwerten)."""
+    if expected:
+        if got >= expected:
+            return f"✅ {got}/{int(expected)} {what}"
+        return f"⚠️  nur {got} von {int(expected)} {what} geliefert"
+    if got == 0:
+        if listed:
+            return f"⚠️  {listed} Einträge geliefert, aber alle 0"
+        return f"ℹ️  keine Liste geliefert (nicht jedes Modell liefert Einzelwerte)"
+    return f"ℹ️  {got} {what} (erwartete Anzahl nicht angegeben)"
+
+
+def print_diagnosis(device_model):
+    """Auswertung der wichtigsten Befunde — erleichtert die Triage eines Logs."""
+    print(SEP)
+    print("  🔎 Diagnose-Auswertung (v4.3)")
+    print(SEP)
+    raw = DIAG.get("model_raw") if DIAG.get("model_raw") is not None else device_model
+    hint = "  (Leerzeichen am Ende!)" if isinstance(raw, str) and raw != raw.rstrip() else ""
+    print(f"  Modellname (roh): {raw!r}{hint}")
+    print()
+
+    # 1) Status v1 <-> v2
+    print("  1) Status: v1 storage/list workStatus ↔ v2 batteryStatus")
+    v1s = DIAG.get("v1_work_status")
+    v2 = DIAG.get("v2") or {}
+    v2s = v2.get("status")
+    mapping = {0: "Standby", 1: "Standby", 2: "Discharging", 3: "Charging"}
+    print(f"     v1 workStatus   : {v1s!r}")
+    mapped = None
+    if v2s is not None and _num(v2s) is not None:
+        mapped = mapping.get(int(_num(v2s)))
+    print(f"     v2 batteryStatus: {v2s!r}" + (f"  → {mapped}" if mapped else ""))
+    cur = v2.get("current")
+    exp_dir = None
+    if cur is not None:
+        if abs(cur) >= 0.5:
+            exp_dir = "Charging" if cur > 0 else "Discharging"
+        print(f"     v2 batteryCurrent: {cur} A  → "
+              + (f"Stromrichtung: {exp_dir}  (Vorzeichen-Konvention aus Stack100-Logs: + = Laden)"
+                 if exp_dir else "|I| < 0.5 A — Richtung nicht beurteilbar"))
+    _STATE_WORDS = {"standby", "charging", "discharging", "fault", "idle"}
+    if v1s is None or mapped is None:
+        print("     ℹ️  Vergleich nicht möglich (v1- oder v2-Status fehlt).")
+    elif str(v1s).lower() not in _STATE_WORDS:
+        print(f"     ℹ️  v1 workStatus '{v1s}' ist kein Lade-/Entladestatus (eher ein "
+              "Betriebsmodus) — Vergleich nicht aussagekräftig.")
+    else:
+        if str(v1s).lower() == mapped.lower():
+            print("     ✅ v1 und v2 stimmen überein.")
+        else:
+            print(f"     ⚠️  Abweichung: v1 '{v1s}' ≠ v2 '{mapped}'. Hinweis: bei Tower/Stack100 war "
+                  "v1 workStatus unzuverlässig — v2 batteryStatus bevorzugen.")
+        if exp_dir and exp_dir != mapped:
+            print(f"     ⚠️  v2 batteryStatus ({mapped}) passt nicht zur Stromrichtung ({exp_dir}).")
+    print()
+
+    # 2) Datenqualität v2
+    print("  2) Datenqualität v2 GetRealTimeDataBySN")
+    if not v2:
+        print("     ℹ️  Keine v2-Echtzeitdaten ausgewertet.")
+    else:
+        print(f"     Zellspannungen : {_verdict_count(v2['cells'], v2['cells_expected'], 'Zellspannungen')}")
+        tz = v2["temps_nonzero"]
+        print(f"     Temperaturen   : {_verdict_count(tz, v2['temps_expected'], 'Temperaturen ≠ 0', v2['temps'])}")
+        mods = v2.get("modules") or []
+        if mods:
+            good = [m for m in mods if m["cells_expected"] and m["cells"] >= m["cells_expected"]
+                    and (not m["temps_expected"] or m["temps_nonzero"] >= m["temps_expected"])]
+            print(f"     bmsInfoList    : {len(mods)} Module, davon {len(good)} vollständig")
+            for m in mods:
+                if m not in good:
+                    print(f"        ⚠️  {m['sn']}: Zellen {m['cells']}/{m['cells_expected']}, "
+                          f"Temperaturen ≠ 0: {m['temps_nonzero']}/{m['temps_expected']}")
+        else:
+            print("     bmsInfoList    : nicht vorhanden")
+    print()
+
+    # 3) v1 Modulabrufe
+    print("  3) v1 Modulabrufe (realTime/data je Modul)")
+    mods1 = DIAG.get("v1_modules") or []
+    if not mods1:
+        print("     ℹ️  Keine Modulabrufe durchgeführt (kein SUB / keine Module erkannt).")
+    else:
+        for m in mods1:
+            tag = " (abgeleitet)" if m["derived"] else ""
+            if m["ok"]:
+                print(f"     ✅ {m['sn']}{tag}: {m['points']} Points, {m['cells']} Zellspannungs-Points")
+            elif "not bound" in (m.get("info") or "").lower():
+                print(f"     ℹ️  {m['sn']}{tag}: Direktabruf nicht möglich — API meldet 'not bound' "
+                      "(SN nicht an das Konto gebunden). Nur informativ; relevant ist das für "
+                      "Modelle, die Einzelzellen über das Sub-Modul liefern (z.B. PowerBrick).")
+            elif m["empty"]:
+                print(f"     ⚠️  {m['sn']}{tag}: LEERE Antwort (HTTP {m['http']}) — typisch für Störung auf Dyness-Seite")
+            else:
+                print(f"     ❌ {m['sn']}{tag}: keine Daten (code={m['code']}, HTTP {m['http']})")
+    print()
+
+    # 4) Aufruf-Statistik
+    print("  4) Aufruf-Statistik")
+    print(f"     Calls: {STATS['calls']}   HTTP-429: {STATS['rate_limited']} "
+          f"(nach Retries weiter 429: {STATS['rate_limited_final']})   "
+          f"leere/ungültige Antworten: {STATS['empty']}   Verbindungsfehler: {STATS['errors']}")
+    if STATS["rate_limited_final"]:
+        print("     ⚠️  Einzelne Antworten fehlen wegen Rate-Limit. Bitte HA-Integration kurz "
+              "deaktivieren und das Skript erneut starten.")
+    if STATS["empty"]:
+        print("     ⚠️  Leere Antworten sind typisch für eine Störung auf Dyness-Seite — "
+              "Log trotzdem im Issue teilen.")
+    print()
 
 
 def print_result(label, path, body, result, ver="v1", http_method="POST"):
@@ -532,11 +838,11 @@ def analyze_v2_realtime(result, device_series="unknown"):
         except: pass
     cell_v = batt.get("cellVoltageList") or []
     if len(cell_v) >= 2:
-        try:
-            floats = [float(x) for x in cell_v]
+        floats = [x for x in (_num(c) for c in cell_v) if x is not None]
+        if len(floats) >= 2:
             diff = round((max(floats) - min(floats)) * 1000, 1)
             print(f"    cellVoltageDiffMv   = {diff} mV")
-        except: pass
+    _capture_v2_quality(batt)
 
     print(f"\n  ✅ v2 GetRealTimeDataBySN: VERFÜGBAR")
     return True
@@ -624,12 +930,12 @@ def analyze_v2_status(result):
     ok = _v2_status(result, "GetStatusInfBySN")
     if not ok: return False
     data = result.get("data")
-    # data=null bedeutet: Endpunkt antwortet, aber liefert fuer dieses Geraet
+    # data=null bedeutet: Endpunkt antwortet, aber liefert für dieses Gerät
     # keine Statusdaten (bekanntes No-Op-200-Muster bei Junior Box).
     # Nicht als "echte Daten verfügbar" werten.
     if not data:
-        print(f"  ⚠️  verfügbar, aber data=null — kein Statusdatensatz fuer dieses Geraet")
-        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht fuer Cygni/HT-A gedacht)")
+        print(f"  ⚠️  verfügbar, aber data=null — kein Statusdatensatz für dieses Gerät")
+        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht für Cygni/HT-A gedacht)")
         return "empty"
     FIELDS = {
         "safeCountry": "Sicherheitsland/-norm Code",
@@ -654,8 +960,8 @@ def analyze_v2_total_energy(result):
     if not ok: return False
     data = result.get("data")
     if not data:
-        print(f"  ⚠️  verfügbar, aber data=null — keine Energiezaehler fuer dieses Geraet")
-        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht fuer Cygni/HT-A gedacht)")
+        print(f"  ⚠️  verfügbar, aber data=null — keine Energiezähler für dieses Gerät")
+        print(f"      (normales Verhalten bei Junior Box / LV-Battery, nicht für Cygni/HT-A gedacht)")
         return "empty"
     FIELDS = {
         # Cygni / AquaVolt / HT-A (flat structure)
@@ -720,9 +1026,10 @@ def print_summary(results, device_model):
 
     print()
     if any_ok:
-        rt_ok = results.get("rt", False)
-        par_ok = results.get("parallel", False)
-        en_ok = results.get("energy", False)
+        # Achtung: "empty" (200 mit data=null) ist ein truthy String — nur echtes True zählt
+        rt_ok = results.get("rt") is True
+        par_ok = results.get("parallel") is True
+        en_ok = results.get("energy") is True
         v2_only = results.get("_v2_only_device", False)
 
         if v2_only:
@@ -734,11 +1041,12 @@ def print_summary(results, device_model):
             print("     → Bitte als Issue mit diesem Log melden: https://github.com/shopf/dyness_battery")
             print()
 
-        print("  💡 Polling-Einschätzung:")
+        print("  💡 Polling-Einschätzung (nur Endpunkt-Verfügbarkeit — ob v2 die v1-Daten")
+        print("     wirklich ersetzen kann, zeigt die Datenqualität in der Diagnose-Auswertung):")
         if rt_ok and par_ok:
-            print("     v2 kann v1 Master + Sub-Modul-Calls ersetzen → ~60% weniger Calls/Zyklus")
+            print("     Echtzeit- und Parallel-Endpunkt antworten.")
         elif rt_ok:
-            print("     v2 kann v1 Master-Calls ersetzen → ~30% weniger Calls/Zyklus")
+            print("     Echtzeit-Endpunkt antwortet.")
         if en_ok:
             print("     GetTotalEnergyDataBySN liefert Energie-Zähler → ersetzt v1 getLastPowerDataBySn")
     else:
@@ -753,16 +1061,26 @@ def print_summary(results, device_model):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_install_anonymizer()
 print(SEP)
-print("Dyness API Tester v4.2 — v1 (erweitert) + v2 Kompatibilitätstest (alle Serien)")
+print(f"Dyness API Tester v{SCRIPT_VERSION} — v1 (erweitert) + v2 Kompatibilitätstest (alle Serien)")
+print(f"Start: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC   |   "
+      f"CALL_DELAY={CALL_DELAY}s  MAX_RETRIES={MAX_RETRIES}  ANONYMIZE={ANONYMIZE}")
+print("Hinweis: Bitte NICHT parallel zu einem laufenden HA-Poll starten (sonst HTTP 429).")
+print("         Laufzeit ca. 2-4 Minuten wegen der Pausen zwischen den Calls.")
+if ANONYMIZE:
+    print("Anonymisierung aktiv: Seriennummern maskiert (erste/letzte 4 Zeichen bleiben),")
+    print("                      Stationsname/Standort/Bild-URL entfernt.")
 print(SEP)
 
 device_sn = DEVICE_SN.strip()
 dongle_sn = DONGLE_SN.strip()
+_register_sn(device_sn)
+_register_sn(dongle_sn)
 device_model = "Unbekannt"
 
 # ── Auto-Discovery ────────────────────────────────────────────────────────────
-# Flag: True wenn Gerät nur ueber v2 sichtbar ist (v1 storage/list liefert 0)
+# Flag: True wenn Gerät nur über v2 sichtbar ist (v1 storage/list liefert 0)
 v2_only_device = False
 
 if not device_sn:
@@ -795,7 +1113,7 @@ if not device_sn:
                 device_model = bms.get("deviceModel", "Unbekannt")
                 v2_only_device = True
                 print(f"✅ Gerät (v2-only): {device_sn}  Modell: {device_model}")
-                print(f"   ⚠️  Dieses Gerät ist NUR ueber v2 sichtbar — v1-Endpunkte werden")
+                print(f"   ⚠️  Dieses Gerät ist NUR über v2 sichtbar — v1-Endpunkte werden")
                 print(f"       keine Nutzdaten liefern. v2-Abschnitt ist der relevante Teil.")
                 print(f"   Alle {len(v2_devs)} SN-Schreibweise(n) aus GetDeviceList:")
                 for d in v2_devs:
@@ -824,6 +1142,12 @@ if is_ok(res):
 
 res = api_v1("/v1/device/storage/list", body_full)
 print_result("Storage Liste [workStatus]", "/v1/device/storage/list", body_full, res, "v1")
+_sl_entries = ((res.get("data") or {}).get("list") or []) if is_ok(res) else []
+_sl_match = next((e for e in _sl_entries if e.get("deviceSn") == device_sn),
+                 _sl_entries[0] if _sl_entries else None)
+if _sl_match:
+    DIAG["v1_work_status"] = _sl_match.get("workStatus")
+    DIAG["model_raw"] = _sl_match.get("deviceModelName")
 
 res = api_v1("/v1/station/info", body_sn)
 print_result("Anlageninfo", "/v1/station/info", body_sn, res, "v1")
@@ -837,7 +1161,7 @@ print(f"  Signatur-Variante verwendet: {res.get('_signature_variant', '?')}")
 print()
 
 # Alternative zu storage/list — liefert zusätzlich masterSlaveStatus + parentCode
-# (relevant für Sub-Modul/Combiner-Box Erkennung, siehe Issue #31)
+# (relevant für Sub-Modul/Combiner-Box Erkennung)
 # Schema: RequestOpenApiDeviceJuniorListDto — deviceType ist PFLICHT und kodiert:
 #   1 = Micro ESS, 2 = Junior Box, 3 = household pure low-voltage battery,
 #   4 = household high-voltage battery cluster
@@ -892,7 +1216,7 @@ def analyze_household_list_entry(entry):
     if extra:
         print(f"    🆕 Unbekannte Felder: {', '.join(f'{k}={entry[k]}' for k in extra)}")
     if entry.get("parentCode"):
-        print(f"    💡 parentCode={entry['parentCode']!r} gesetzt — relevant für Issue #31 "
+        print(f"    💡 parentCode={entry['parentCode']!r} gesetzt "
               f"(Combiner-Box / Sub-Modul-Hierarchie)")
 
 
@@ -940,7 +1264,23 @@ if sub_raw:
         sub_sns = filtered
         print(f"► {len(sub_sns)} parallele Sub-Module: {sub_sns}")
     elif len(filtered) == 1:
-        print(f"► 1 Sub-Modul ({filtered[0]}) — kein separater v1-Abruf (Einzelmodul)")
+        sub_sns = filtered
+        print(f"► 1 Sub-Modul ({filtered[0]}) — Einzelmodul: wird zusätzlich abgefragt "
+              f"(Diagnose; die Integration nutzt das bisher für PowerBrick-Zellspannungen)")
+
+# Diagnose-Probe: Stack100 mit leerem SUB -> Modul-SNs aus Point 4300 ableiten.
+# ACHTUNG: reine Diagnose des Skripts. Sie zeigt, ob die Module abrufbar wären,
+# auch wenn SUB leer ist — sie sagt nichts darüber, was die Integration tut.
+derived_sns = []
+_model_norm = (device_model or "").upper().replace(" ", "-")
+if not sub_sns and _model_norm.startswith("STACK100"):
+    _n_boxes = _num(rt.get("4300"))
+    if _n_boxes and 1 <= _n_boxes <= 40:
+        _base = _strip_sn_suffix(device_sn)
+        derived_sns = [f"{_base}-{i:02d}" for i in range(1, int(_n_boxes) + 1)]
+        sub_sns = list(derived_sns)
+        print(f"► SUB ist leer, Point 4300 = {int(_n_boxes)} → Diagnose-Probe mit "
+              f"{len(derived_sns)} abgeleiteten Modul-SNs ({_base}-01 ... -{int(_n_boxes):02d})")
 print()
 
 # ── v1: Leistungsdaten ────────────────────────────────────────────────────────
@@ -962,8 +1302,12 @@ print_result("🆕 Energie-Daten (Tag/Gesamt)", "/v1/device/getEnergyDataBySn", 
 for sn in sub_sns:
     mb = {"deviceSn": sn, "collectorSn": dongle_sn} if dongle_sn else {"deviceSn": sn}
     res = api_v1("/v1/device/realTime/data", mb)
-    print_result(f"Echtzeit Sub-Modul {sn}", "/v1/device/realTime/data", mb, res, "v1")
-    analyze_rt_points(get_rt_points(res), f"Sub-Modul {sn}")
+    _derived = sn in derived_sns
+    _tag = " (abgeleitet aus Point 4300 — Diagnose)" if _derived else ""
+    print_result(f"Echtzeit Sub-Modul {sn}{_tag}", "/v1/device/realTime/data", mb, res, "v1")
+    _pts = get_rt_points(res)
+    analyze_rt_points(_pts, f"Sub-Modul {sn}")
+    _note_v1_module(sn, res, _pts, _derived)
 
 for sn in bdu_sns:
     mb = {"deviceSn": sn, "collectorSn": dongle_sn} if dongle_sn else {"deviceSn": sn}
@@ -985,7 +1329,7 @@ for label, path, body in [
     res = api_v1(path, body)
     print_result(label, path, body, res, "v1")
 
-# ✅ Korrigiert (vorher falscher Body — siehe Issue #32):
+# ✅ Korrigiert (vorher falscher Body):
 # alarm/query erwartet "deviceSnList" als Array, nicht "deviceSn" als String,
 # und pageNum/pageSize sind required.
 body_alarm_v1 = {"deviceSnList": [device_sn], "pageNum": 1, "pageSize": 20}
@@ -1019,8 +1363,8 @@ print()
 
 # ── v2 SN-Varianten ermitteln ─────────────────────────────────────────────────
 # v1 verwendet z.B. "R07E01234567890F-BMS", v2 erwartet ggf. nur "R07E01234567890F".
-# Zusaetzlich liefert GetDeviceList manchmal 4 Eintraege pro Geraet (mit/ohne Suffix
-# in beiden Schreibweisen) — alle systematisch durchprobieren (Issue: DYNE 8.0L-1P-A).
+# Zusätzlich liefert GetDeviceList manchmal 4 Einträge pro Gerät (mit/ohne Suffix
+# in beiden Schreibweisen) — alle systematisch durchprobieren.
 
 def _sn_base(sn):
     return re.sub(r'-(BMS|BDU|INV|EMS)$', '', sn)
@@ -1042,26 +1386,28 @@ if dongle_sn:
     _add_cand(dongle_sn)
 # Alle SN-Schreibweisen aus GetDeviceList einbeziehen (inkl. Slave-SNs)
 # GetDeviceList wurde bereits im Discovery-Fallback aufgerufen; hier nochmal
-# fuer den Normalfall (v1-Geraete) und um alle Schreibweisen zu erfassen.
+# für den Normalfall (v1-Geräte) und um alle Schreibweisen zu erfassen.
 _dl_check = api_v2("/v2/GetDeviceList", {})
 _dl_entries = _dl_check.get("data") if isinstance(_dl_check.get("data"), list) else []
 _base = _sn_base(device_sn)
 for _e in _dl_entries:
     cand_sn = _e.get("deviceSn", "")
-    # Nur SNs desselben physischen Geraets (gleicher Kern ohne Suffix)
+    # Nur SNs desselben physischen Geräts (gleicher Kern ohne Suffix)
     if cand_sn and _sn_base(cand_sn) == _base:
         _add_cand(_sn_base(cand_sn))
         _add_cand(cand_sn)
 
-print(f"  SN-Varianten fuer v2-Test ({len(v2_sn_candidates)} Kandidaten): {v2_sn_candidates}")
+print(f"  SN-Varianten für v2-Test ({len(v2_sn_candidates)} Kandidaten): {v2_sn_candidates}")
 print()
 
 # Teste GetDeviceInfBySN mit allen Kandidaten um die funktionierende SN zu finden
 v2_sn = device_sn  # Fallback
 v2_sn_found = False
+probe_infos = {}
 for candidate in v2_sn_candidates:
     probe = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": candidate})
     probe_info = probe.get("info", "")
+    probe_infos[candidate] = str(probe_info or "")
     if is_ok(probe):
         v2_sn = candidate
         v2_sn_found = True
@@ -1072,21 +1418,21 @@ for candidate in v2_sn_candidates:
 
 if not v2_sn_found:
     # Sonderfall: "Device is not configured" bei ALLEN Kandidaten trotz
-    # communicationStatus=1 in GetDeviceList → v2-Endpunkt kennt das Geraet,
-    # aber es ist noch nicht vollstaendig provisioniert (kein Konfigurations-
+    # communicationStatus=1 in GetDeviceList → v2-Endpunkt kennt das Gerät,
+    # aber es ist noch nicht vollständig provisioniert (kein Konfigurations-
     # Datensatz im Backend). Anders als "404 not found".
-    all_not_configured = all(
-        "not configured" in (api_v2("/v2/GetDeviceInfBySN", {"deviceSn": c}).get("info","")).lower()
+    all_not_configured = bool(probe_infos) and all(
+        "not configured" in probe_infos.get(c, "").lower()
         for c in v2_sn_candidates
     )
     if all_not_configured:
         print(f"  ⚠️  Alle Kandidaten: 'Device is not configured'")
-        print(f"     Das Geraet ist in GetDeviceList sichtbar (communicationStatus=1),")
-        print(f"     aber noch nicht vollstaendig im v2-Backend provisioniert.")
-        print(f"     → Dyness-Support kontaktieren wegen v2-Aktivierung fuer dieses Konto/Geraet.")
+        print(f"     Das Gerät ist in GetDeviceList sichtbar (communicationStatus=1),")
+        print(f"     aber noch nicht vollständig im v2-Backend provisioniert.")
+        print(f"     → Dyness-Support kontaktieren wegen v2-Aktivierung für dieses Konto/Gerät.")
     else:
-        print(f"  ⚠️  Alle SN-Varianten gaben Fehler — v2 moeglicherweise nicht aktiviert.")
-    print(f"     Verwende '{v2_sn}' fuer alle weiteren Tests (Rohdaten sichtbar).")
+        print(f"  ⚠️  Alle SN-Varianten gaben Fehler — v2 möglicherweise nicht aktiviert.")
+    print(f"     Verwende '{v2_sn}' für alle weiteren Tests (Rohdaten sichtbar).")
 print()
 
 body_sn_v2   = {"deviceSn": v2_sn}
@@ -1130,4 +1476,5 @@ print_result("Energie-Statistiken", "/v2/GetTotalEnergyDataBySN", body_sn_v2, re
 v2_results["energy"] = analyze_v2_total_energy(res)
 
 # ── Zusammenfassung ───────────────────────────────────────────────────────────
+print_diagnosis(device_model)
 print_summary(v2_results, device_model)

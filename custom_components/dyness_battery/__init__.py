@@ -543,6 +543,97 @@ def _is_success(result: dict) -> bool:
     return str(code) in ("0", "200") or code == 0
 
 
+# ── v2-Hilfsfunktionen (Tower + Stack100) ───────────────────────────────────
+
+# v2 GetRealTimeDataBySN.batteryInfo.batteryStatus (belegt mit Tower TP11 und
+# Stack100 Standard + Pro: 2 = Discharging bei negativem, 3 = Charging bei positivem Strom).
+_V2_BATTERY_STATUS = {0: "Standby", 1: "Standby", 2: "Discharging", 3: "Charging"}
+_V2_STATUS_MAX_AGE = 900  # s: so lange darf ein früherer v2-Status einen v2-Aussetzer überbrücken
+
+
+def _work_status_from_v2(batt) -> str | None:
+    """Mappt batteryInfo.batteryStatus auf unsere workStatus-Texte; None wenn unbekannt/fehlend."""
+    if not isinstance(batt, dict):
+        return None
+    try:
+        return _V2_BATTERY_STATUS.get(int(float(batt.get("batteryStatus"))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _num_prefix(v):
+    """Zahl aus einem API-Wert mit optionaler Einheit ('3.254V', '9.6°C', '-3.18'); sonst None."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    end = len(s)
+    while end > 0 and not (s[end - 1].isdigit() or s[end - 1] == "."):
+        end -= 1
+    return _to_float(s[:end])
+
+
+def _fill_temp_pair(data: dict, key_max: str, key_min: str, values: list) -> None:
+    """Füllt fehlende Max-/Min-Temperaturen aus values (None, "" und Nichtnumerisches
+    zählen als fehlend). Min <= Max bleibt garantiert, auch wenn nur einer der beiden
+    Werte vom Master kam und der andere aus den Modulen ergänzt wird."""
+    if not values:
+        return
+    cur_max, cur_min = _to_float(data.get(key_max)), _to_float(data.get(key_min))
+    if cur_max is None:
+        data[key_max] = max(max(values), cur_min) if cur_min is not None else max(values)
+    if cur_min is None:
+        mx = _to_float(data.get(key_max))
+        data[key_min] = min(min(values), mx) if mx is not None else min(values)
+
+
+def _stack_cell_temps(temps: list, n_temps=None) -> dict:
+    """Stack100-Zelltemperaturen nach Index (cell_temp_1..4).
+
+    Werte unter 0 sind gültig (kalte Garage/Scheune im Winter); der Platzhalter 0 für
+    nicht belegte Slots nicht. n_temps (v1 Point 14200 = Anzahl belegter Sensoren) begrenzt
+    die belegten Slots, sofern bekannt."""
+    out = {}
+    for i in range(4):
+        t = temps[i] if i < len(temps) else None
+        if t is None:
+            ok = False
+        elif n_temps is not None:
+            ok = i < int(n_temps)
+        else:
+            ok = t != 0
+        out[f"cell_temp_{i + 1}"] = t if ok else None
+    return out
+
+
+def _stack_module_from_v2(bms: dict, index: int = 0) -> dict | None:
+    """Baut aus einem v2 bmsInfoList-Eintrag dasselbe Modul-Dict wie _parse_module_points
+    (Stack100): cell_01..16, cell_count, cell_temp_1..4, cell_voltage_max/min/spread_mv.
+    None, wenn der Eintrag keine verwertbaren Zellspannungen enthält."""
+    sn = str(bms.get("bmsSn") or "").strip()
+    if not sn:
+        return None
+    volts = [_num_prefix(c) for c in (bms.get("cellVoltageList") or [])][:16]
+    if not any(v is not None and v > 0 for v in volts):
+        return None
+    d = {"sn": sn, "module_id": sn, "cell_count": len(volts)}
+    cells = []
+    for i in range(1, 17):
+        v = volts[i - 1] if i <= len(volts) else None
+        d[f"cell_{i:02d}"] = v
+        if v is not None and v > 0:
+            cells.append(v)
+    d.update(_stack_cell_temps([_num_prefix(t) for t in (bms.get("cellTempList") or [])][:4]))
+    suffix = sn.rsplit("-", 1)[-1] if "-" in sn else ""
+    d["module_number"] = float(int(suffix)) if suffix.isdigit() else float(index)
+    if cells:
+        d["cell_voltage_max"]       = max(cells)
+        d["cell_voltage_min"]       = min(cells)
+        d["cell_voltage_spread_mv"] = round((max(cells) - min(cells)) * 1000, 1)
+    return d
+
+
 # ── Control-Patch: Zeitfenster-Gruppen (TOU) ─────────────────────
 
 def _hhmm_int_to_str(raw) -> str | None:
@@ -748,6 +839,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         # ersten erfolgreichen Poll aus SUB gesetzt. Persistenz würde
         # async_update_entry aus _async_update_data erfordern.
         self._single_sub_sn: str | None = None
+        self._fresh_modules: set[str] = set()   # Module mit frischen v1-Daten im aktuellen Poll
+        self._v2_status_cache: tuple[str, float] | None = None  # (workStatus, monotonic)
+        self._v2_unknown_status_warned = None
         self._last_call_time: float = 0.0
         self._storage_list_cycle: int = 0  # Zähler für storage/list Throttling
         # Optimierung: getLastRunningDataBySn überspringen wenn einmal
@@ -1163,6 +1257,84 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                 "Dyness: known_module_sns konnte nicht gespeichert werden: %s", err
             )
 
+    async def _fetch_v2_battery_info(self, session) -> dict | None:
+        """v2 GetRealTimeDataBySN -> data.batteryInfo (Tower + Stack100).
+
+        Optional: max_retries=0 — bei 429 sofort aufgeben, statt den Poll zu blockieren.
+        Jeder Fehler ist nicht fatal; der Aufrufer fällt auf die v1-Werte zurück."""
+        try:
+            res = await self._call(session, "/v2/GetRealTimeDataBySN",
+                                   {"deviceSn": self.device_sn}, max_retries=0)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Dyness: v2 GetRealTimeDataBySN fehlgeschlagen (%s)", err)
+            return None
+        if not _is_success(res):
+            _LOGGER.debug("Dyness: v2 GetRealTimeDataBySN nicht verfügbar (Code %s)", res.get("code"))
+            return None
+        batt = (res.get("data") or {}).get("batteryInfo")
+        return batt if isinstance(batt, dict) else None
+
+    def _apply_v2_work_status(self, data: dict, batt: dict | None, label: str) -> None:
+        """workStatus aus v2 batteryStatus. v1 storage/list liefert bei Tower und Stack100
+        falsche Werte. Bei einem v2-Aussetzer überbrückt der letzte
+        v2-Status bis zu _V2_STATUS_MAX_AGE Sekunden, damit der Wert nicht zwischen
+        richtig (v2) und falsch (v1) hin- und herspringt."""
+        now = _time.monotonic()
+        ws = _work_status_from_v2(batt)
+        if ws is not None:
+            data["workStatus"] = ws
+            self._v2_status_cache = (ws, now)
+            _LOGGER.debug("Dyness %s: workStatus aus v2 batteryStatus=%s → %s",
+                          label, (batt or {}).get("batteryStatus"), ws)
+            return
+        raw = (batt or {}).get("batteryStatus") if isinstance(batt, dict) else None
+        if raw is not None and raw != self._v2_unknown_status_warned:
+            self._v2_unknown_status_warned = raw
+            _LOGGER.warning("Dyness %s: unbekannter v2 batteryStatus-Wert %r — v1-Wert '%s' "
+                            "wird beibehalten", label, raw, data.get("workStatus"))
+        cached = self._v2_status_cache
+        if cached and now - cached[1] <= _V2_STATUS_MAX_AGE:
+            data["workStatus"] = cached[0]
+            _LOGGER.debug("Dyness %s: v2 nicht verfügbar — letzter v2-Status '%s' (vor %d s)",
+                          label, cached[0], int(now - cached[1]))
+        else:
+            _LOGGER.debug("Dyness %s: v2 nicht verfügbar — workStatus aus v1: %s",
+                          label, data.get("workStatus"))
+
+    def _apply_v2_stack_modules(self, batt: dict | None) -> None:
+        """Stack100: v2 bmsInfoList als Fallback für die Modul-Daten.
+
+        - Module ohne frische v1-Daten in diesem Poll (v1 leer/429/Störung) werden mit den
+          v2-Daten überschrieben statt auf einem alten Wert stehen zu bleiben.
+        - Bootstrap: kennt der Coordinator noch kein Modul (SUB leer und nichts gespeichert,
+          z.B. Neuinstallation während einer Dyness-Störung), wird die Modulliste aus
+          bmsInfoList übernommen und wie üblich persistiert."""
+        if not isinstance(batt, dict):
+            return
+        parsed = {}
+        for idx, bms in enumerate(batt.get("bmsInfoList") or [], start=1):
+            if isinstance(bms, dict):
+                d = _stack_module_from_v2(bms, idx)
+                if d:
+                    parsed[d["sn"]] = d
+        if not parsed:
+            return
+        if not self._module_sns and len(parsed) > 1:
+            self._module_sns = sorted(parsed)
+            self._update_scan_interval()
+            _LOGGER.info("Dyness Stack100: Modulliste aus v2 bmsInfoList übernommen "
+                         "(SUB leer, keine gespeicherte Liste): %s", self._module_sns)
+            if self.config_entry is not None:
+                self.hass.async_create_task(
+                    self._persist_module_sns(self.config_entry, list(self._module_sns)))
+        filled = [sn for sn in parsed
+                  if sn in self._module_sns and sn not in self._fresh_modules]
+        for sn in filled:
+            self.module_data[sn] = parsed[sn]
+        if filled:
+            _LOGGER.info("Dyness Stack100: %d Modul(e) aus v2 bmsInfoList ergänzt "
+                         "(v1-Modulabruf ohne Daten)", len(filled))
+
     async def _async_update_data(self):
         async with aiohttp.ClientSession() as session:
             try:
@@ -1373,6 +1545,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
 
                     # ── Per-Modul realTime/data ───────────────────────────────
                     new_module_data: dict[str, dict] = {}
+                    self._fresh_modules = set()
                     for sn in self._module_sns:
                         try:
                             # Sub-Modul binden falls noch nicht gebunden
@@ -1403,6 +1576,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                 }
                                 mid = sn  # volle SN als Key — konsistent mit Entity unique_id und known_module_ids
                                 new_module_data[mid] = _parse_module_points(sn, mid, m_pts)
+                                self._fresh_modules.add(mid)
                                 _LOGGER.debug("Dyness Modul %s: %d Punkte", mid, len(m_pts))
                             else:
                                 code = m_result.get("code")
@@ -1590,6 +1764,17 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         )
                     else:
                         data["batteryCapacity"] = bc_single
+                    # ── v2 batteryInfo (Tower + Stack100) ────────────────────
+                    # v1 storage/list workStatus ist bei Tower und Stack100 unzuverlässig:
+                    # v2 batteryStatus ist die verlässliche Quelle. Ein einziger v2-Call
+                    # pro Poll; bei Stack100 liefert er zusätzlich die
+                    # Modul-Daten (bmsInfoList) als Fallback für den v1-Modulabruf.
+                    if schema in (SCHEMA_TOWER, SCHEMA_STACK100):
+                        v2_batt = await self._fetch_v2_battery_info(session)
+                        self._apply_v2_work_status(data, v2_batt, schema)
+                        if schema == SCHEMA_STACK100:
+                            self._apply_v2_stack_modules(v2_batt)
+
                     if schema == SCHEMA_STACK100:
                         # Stack100 Schema — Points direkt vom BMS Master
                         data["packVoltage"] = rt.get("1100") if rt.get("1100") is not None else data.get("packVoltage")
@@ -1813,53 +1998,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data["alarmSys"]      = int(str(rt.get("5104", "0")) == "1")
                             data["alarmTotal"]    = rt.get("9999999")
 
-                        # workStatus: v1 storage/list liefert für alle Tower-Varianten
-                        # falsche Werte während aktivem Betrieb (z.B. "Fault" beim Laden,
-                        # "Standby" beim Entladen. v1 Point 4000 ist ebenfalls unzuverlässig
-                        # (immer 0). v2 GetRealTimeDataBySN.batteryStatus ist die verlässliche
-                        # Quelle (0/1=Standby, 2=Discharging, 3=Charging) — bei allen Tower-
-                        # Modellen verfügbar wenn v2 grundsätzlich unterstützt wird.
-                        # Fallback: v1 storage/list-Wert bleibt erhalten.
-                        try:
-                            _v2_tower = await self._call(
-                                session,
-                                "/v2/GetRealTimeDataBySN",
-                                {"deviceSn": self.device_sn},
-                            )
-                            if _is_success(_v2_tower):
-                                _bs_raw = (_v2_tower.get("data") or {}).get("batteryStatus")
-                                if _bs_raw is not None:
-                                    _TOWER_STATUS = {
-                                        0: "Standby",
-                                        1: "Standby",
-                                        2: "Discharging",
-                                        3: "Charging",
-                                    }
-                                    _bs_mapped = _TOWER_STATUS.get(int(_bs_raw))
-                                    if _bs_mapped is not None:
-                                        data["workStatus"] = _bs_mapped
-                                        _LOGGER.debug(
-                                            "Dyness Tower: workStatus aus v2 batteryStatus=%s → %s",
-                                            _bs_raw, _bs_mapped,
-                                        )
-                                    else:
-                                        _LOGGER.warning(
-                                            "Dyness Tower: unbekannter v2 batteryStatus-Wert %s "
-                                            "— v1-Wert '%s' wird beibehalten",
-                                            _bs_raw, data.get("workStatus"),
-                                        )
-                            else:
-                                _LOGGER.debug(
-                                    "Dyness Tower: v2 GetRealTimeDataBySN nicht verfügbar "
-                                    "— workStatus aus v1 storage/list: %s",
-                                    data.get("workStatus"),
-                                )
-                        except Exception as _tower_v2_err:  # noqa: BLE001
-                            _LOGGER.debug(
-                                "Dyness Tower: v2-Statusabfrage fehlgeschlagen (%s) "
-                                "— workStatus aus v1 storage/list: %s",
-                                _tower_v2_err, data.get("workStatus"),
-                            )
+                        # workStatus (Tower): siehe v2-Abruf vor dem Schema-Block.
 
                     elif schema == SCHEMA_POWERBOX_G2:
                         # PowerBox G2 Schema — zwei API-Varianten bekannt:
@@ -2293,31 +2432,6 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             if cells_pb:
                                 data["cellVoltageDiffMv"] = round((max(cells_pb) - min(cells_pb)) * 1000, 1)
 
-                            # cycleCount: Variante A liest Point 900 vom Master.
-                            # Bei 2+ Modulen fehlt dieser oft → aus module_data aggregieren.
-                            if data.get("cycleCount") is None and self.module_data:
-                                mod_cycles = [
-                                    _to_float(m.get("cycle_count"))
-                                    for m in self.module_data.values()
-                                    if m.get("cycle_count") is not None
-                                ]
-                                if mod_cycles:
-                                    data["cycleCount"] = round(
-                                        sum(mod_cycles) / len(mod_cycles), 0
-                                    )
-
-                            # tempMax/tempMin: Master liefert Points 1800/2000.
-                            # Bei 2+ Modulen: Aggregation aus module_data als Fallback.
-                            if data.get("tempMax") is None and self.module_data:
-                                mod_bms_temps = [
-                                    _to_float(m.get("bms_temp"))
-                                    for m in self.module_data.values()
-                                    if m.get("bms_temp") is not None
-                                ]
-                                if mod_bms_temps:
-                                    data["tempMax"] = max(mod_bms_temps)
-                                    data["tempMin"] = min(mod_bms_temps) if len(mod_bms_temps) > 1 else None
-
                             # Single-Sub-Modul-Poll: self._single_sub_sn gesetzt
                             # wenn genau 1 SUB erkannt — Master hat keine Einzelzellen.
                             if not cells_pb and self._single_sub_sn:
@@ -2381,6 +2495,26 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             soh_f = (soh_pb / 100) if (soh_pb is not None and soh_pb <= 100) else 1.0
                             data["usableKwh"]    = round(bc_val * soh_f, 3)
                             data["remainingKwh"] = round(bc_val * soh_f * soc_pb / 100, 3)
+
+                        # ── Pack-Werte aus den Modul-Daten ergänzen (Variante A + B) ──────
+                        # Bei Mehrmodul-Systemen fehlen Cycle Count und Temperaturen auf
+                        # Master-Ebene (None, "" oder nicht numerisch). Fallback aus module_data.
+                        # tempMax/tempMin sind Zelltemperaturen (Point 1800/2000), die
+                        # BMS-Temperatur hat eigene Werte (tempBmsMax/-Min).
+                        if self.module_data:
+                            _mods = list(self.module_data.values())
+                            if _to_float(data.get("cycleCount")) is None:
+                                _cc = [c for c in (_to_float(m.get("cycle_count")) for m in _mods)
+                                       if c is not None]
+                                if _cc:
+                                    data["cycleCount"] = round(sum(_cc) / len(_cc), 0)
+                            _ct = [t for m in _mods
+                                   for t in (_to_float(m.get(f"cell_temp_{i}")) for i in (1, 2, 3, 4))
+                                   if t is not None and t != 0]
+                            _fill_temp_pair(data, "tempMax", "tempMin", _ct)
+                            _bt = [t for t in (_to_float(m.get("bms_temp")) for m in _mods)
+                                   if t is not None and t != 0]
+                            _fill_temp_pair(data, "tempBmsMax", "tempBmsMin", _bt)
 
                         _LOGGER.debug(
                             "Dyness PowerBrick (Variante %s): SOC=%s%%, packVoltage=%s V, "
@@ -2926,12 +3060,9 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
             d[f"cell_{i:02d}"] = v
             if v is not None and v > 0:
                 cells.append(v)
-        # Temperaturen
+        # Temperaturen: 4 Sensoren nach Index; Minuswerte sind gültig (Point 14200 = Anzahl)
         temps = [_to_float(pts.get(str(14300 + i * 100))) for i in range(4)]
-        temps_valid = [t for t in temps if t is not None and t > 0]
-        if temps_valid:
-            d["cell_temp_1"] = temps_valid[0] if len(temps_valid) > 0 else None
-            d["cell_temp_2"] = temps_valid[1] if len(temps_valid) > 1 else None
+        d.update(_stack_cell_temps(temps, _to_float(pts.get("14200"))))
         d["module_number"] = _to_float(pts.get("11000"))
 
     elif is_tp7_module:

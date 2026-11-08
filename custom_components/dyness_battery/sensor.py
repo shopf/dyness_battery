@@ -181,6 +181,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     _TP7_MODULE_SKIP     = {'soc', 'soh', 'voltage', 'current', 'cycle_count', 'bms_temp', 'has_alarm'}
     _STACK100_MODULE_SKIP = {'soc', 'soh', 'voltage', 'current', 'cycle_count', 'bms_temp', 'has_alarm'}
 
+    # Optionale Modul-Sensoren: nur anlegen, wenn das Modul den Wert tatsächlich liefert
+    # (cell_temp_3/4: PowerBrick/DL5 und Stack100 — nicht Tower/TP7). Sonst bliebe der
+    # Sensor dauerhaft "unbekannt". Seit 2.6.1 wurden sie für alle Modultypen angelegt.
+    _OPTIONAL_MODULE_KEYS = {"cell_temp_3", "cell_temp_4"}
+
+    def _remove_unsupported_module_entity(mid: str, data_key: str) -> None:
+        """Entfernt einen in 2.6.1 angelegten Sensor, den dieser Modultyp nie liefert."""
+        _er = er.async_get(hass)
+        entity_id = _er.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{mid}_{data_key}")
+        if entity_id:
+            _er.async_remove(entity_id)
+            _LOGGER.info("Dyness: Sensor %s entfernt — Modul %s liefert diesen Wert nicht",
+                         entity_id, mid)
+
     def _add_new_modules() -> None:
         nonlocal _registry_scanned
         module_data = (coordinator.data or {}).get("module_data", {})
@@ -216,6 +230,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     continue  # TP7: nur Master liefert diese Werte
                 if is_stack100_mod and data_key in _STACK100_MODULE_SKIP:
                     continue  # Stack100: BMS-only Werte nur auf Master-Ebene verfügbar
+                if data_key in _OPTIONAL_MODULE_KEYS and mod.get(data_key) is None:
+                    # Schlüssel fehlt ganz = Modultyp liefert den Wert nie -> ggf. alten
+                    # Sensor aus 2.6.1 entfernen; Schlüssel da, aber leer -> nur nicht anlegen.
+                    if data_key not in mod:
+                        _remove_unsupported_module_entity(mid, data_key)
+                    continue
                 new_entities.append(
                     DynessModuleSensor(
                         coordinator, entry, mid, data_key, trans_key,

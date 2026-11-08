@@ -1,89 +1,35 @@
 """
-Dyness v2 Control-Capability Probe v1.0
-=========================================
-Ergänzung zu dyness_test.py (shopf/dyness_battery)
+Dyness v2 Control-Capability Probe v1.1
+=======================================
+Ergänzung zu dyness_test.py (shopf/dyness_battery): prüft, welche v2-STEUER-
+Endpunkte ein Gerät kennt — OHNE echte Steuerwerte zu senden (nur die SN).
 
-ZWECK
------
-dyness_test.py prüft bereits sehr gründlich die LESE-Endpunkte der v2-API
-(GetDeviceInfBySN, GetRealTimeDataBySN, GetAlarmInfBySN, GetStatusInfBySN,
-GetTotalEnergyDataBySN, GetParallelInfBySN, GetDeviceList).
-
-Was bisher fehlt: ein Test der SCHREIB-/STEUER-Endpunkte. Aus den
-offiziellen Dyness-Protokoll-PDFs (Junior Box, High-voltage battery,
-Low-voltage battery, Cygni HA/HS, AquaVolt/AquaVolt_LV/SolarCube,
-HT-A/LS Series) ergeben sich insgesamt 10 unterschiedliche v2-Set-Endpunkte,
-die je nach Produktfamilie unterschiedlich zusammengestellt sind:
-
-  /v2/SetBaseSetting            (Junior Box, Cygni, AquaVolt/SolarCube, HT-A/LS)
-  /v2/SetWorkModeSetting        (Junior Box, Cygni, AquaVolt/SolarCube, HT-A/LS)
-  /v2/SetBatterySetting         (High-/Low-voltage battery, Cygni, AquaVolt/SolarCube, HT-A/LS)
-  /v2/SetLoadControlSetting     (Cygni, AquaVolt/SolarCube)
-  /v2/SetPeakControlSetting     (Cygni, AquaVolt/SolarCube)
-  /v2/SetAdvancedSetting        (Cygni, AquaVolt/SolarCube, HT-A/LS)
-  /v2/SetGeneratorControlSetting(Cygni)
-  /v2/SetCtrlDataBySN           (HT-A/LS — generischer Register-Zugriff)
-  /v2/SetDspSetting             (HT-A/LS)
-  /v2/SetArmSetting             (HT-A/LS)
-
-Welche Produktbezeichnung (Tower T14, TP7, DL5.0C, Stack100, PowerBox Pro/G2,
-PowerHaus, ...) tatsächlich zu welcher Dokument-Familie gehört, ist NICHT
-zweifelsfrei aus den PDFs ablesbar (dort stehen nur interne Modell-Codes wie
-"HT-A"/"LS"). Deshalb testet dieses Script bewusst ALLE 10 bekannten
-Set-Endpunkte gegen jede gefundene Seriennummer — das beantwortet empirisch
-und zuverlässig "was geht wirklich", unabhängig von der (unsicheren)
-Namens-Zuordnung.
-
-SICHERHEITSKONZEPT — WICHTIG
-----------------------------
-Dieses Script sendet standardmäßig NUR {"deviceSn": "..."} an jeden
-Set-Endpunkt — also OHNE die eigentlichen Steuerparameter (workMode,
-powerLimit, loadSwitch, ...). Das reicht, um zu erkennen, ob der Endpunkt
-für dieses Gerät überhaupt existiert:
-
-  - 200/Erfolg                    -> Endpunkt vorhanden, hat Aufruf akzeptiert
-                                      (bei rein optionalen Zusatzfeldern
-                                      ändert sich am Gerät nichts, da keine
-                                      Werte übergeben wurden)
-  - Fehlermeldung "Parameter
-    fehlt / erforderlich"         -> Endpunkt vorhanden, benötigt aber
-                                      echte Werte (siehe jeweiliges PDF)
-  - 404 / "nicht konfiguriert" /
-    "device type mismatch"        -> Endpunkt für dieses Gerät NICHT
-                                      implementiert
-
-ACHTUNG: Bei einigen Endpunkten (v.a. Junior Box: SetBaseSetting,
-SetWorkModeSetting) sind laut PDF ALLE Zusatzfelder (workMode, powerLimit,
-dischargeDepth, workGroups) PFLICHTFELDER. Ein deviceSn-only-Aufruf wird
-dort aller Voraussicht nach mit einem Validierungsfehler abgelehnt, OHNE
-dass am Gerät etwas verändert wird (Validierung passiert serverseitig vor
-der Befehlsweiterleitung an die Hardware — das ist Standardverhalten bei
-praktisch allen Cloud-APIs, aber eine 100%ige Garantie kann ich dir nicht
-geben, da ich das Verhalten des Dyness-Servers nicht selbst beobachten kann).
-
-ECHTE Steuerbefehle mit echten Werten (die dein Gerät TATSÄCHLICH umstellen
-würden, z.B. Betriebsmodus oder Leistungsgrenzen) sendet dieses Script NIE
-automatisch. Das bleibt bewusst ein manueller, expliziter zweiter Schritt.
-
-Verwendung:
-    pip install requests
-    python3 dyness_control_probe.py
-
-Bitte Ergebnis als Kommentar/Issue teilen:
-https://github.com/shopf/dyness_battery
+Verwendung:   pip install requests   ->   python3 dyness_control_probe.py
+              (--yes überspringt die Sicherheitsabfrage, z. B. für Automatisierung)
+Aenderungen:  siehe CHANGELOG.md
+Ergebnis bitte teilen: https://github.com/shopf/dyness_battery
 """
+
+# ==============================================================
+#  HIER DEINE ZUGANGSDATEN EINTRAGEN  (nur diese 2 Zeilen!)
+# ==============================================================
+API_ID     = "DEINE_API_ID"
+API_SECRET = "DEIN_API_SECRET"
+# Alles Weitere ist optional. Nicht in Europa? Dann weiter unten bei
+# "REGION" API_BASE_V2 anpassen.
+# ==============================================================
 
 import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-import hashlib, hmac, base64, json, re, requests
+import hashlib, hmac, base64, json, re, time, atexit, requests
+from datetime import datetime, timezone
 from email.utils import formatdate
 
-# ===== HIER DEINE ZUGANGSDATEN EINTRAGEN =====
-API_ID     = "DEINE_API_ID"
-API_SECRET = "DEIN_API_SECRET"
+SCRIPT_VERSION = "1.1"
 
+# ===== REGION (in Europa nichts ändern) =====
 # v1 wird nur für die Geräte-Discovery genutzt (wie in dyness_test.py)
 API_BASE_V1 = "https://open-api.dyness.com/openapi/ems-device"
 
@@ -101,11 +47,63 @@ API_BASE_V2 = "https://eu-openapi.dyness.com/openapi/ems-device"        # Europa
 # Optional: Wenn Auto-Discovery fehlschlägt, hier SN(s) manuell eintragen
 MANUAL_DEVICE_SNS = []   # z.B. ["R07E01234567890F-BMS"]
 
-# Sicherheitsschalter — siehe Kommentar oben. NICHT auf True setzen, ohne
-# die Werte in probe_body() vorher an die eigene Situation angepasst und
-# verstanden zu haben. Standard: aus.
-ALLOW_REQUIRED_FIELD_PROBE = False
+# ===== OPTIONEN (normalerweise nicht ändern) =====
+CALL_DELAY    = 2.0    # Mindestabstand zwischen zwei API-Calls in Sekunden (Rate-Limit-Schutz)
+MAX_RETRIES   = 4      # Wiederholungen pro Call bei HTTP 429
+RETRY_BACKOFF = 3.0    # Wartezeit vor Retry: 3 s, 6 s, 12 s, 24 s ...
+ANONYMIZE     = True   # True: SNs maskieren, Stationsdaten entfernen
 # =============================================
+
+# ==============================================================
+#  SICHERHEIT & HINTERGRUND — BITTE VOR DEM ERSTEN START LESEN
+# ==============================================================
+# ZWECK
+#   dyness_test.py prüft die LESE-Endpunkte der v2-API gründlich. Was fehlte:
+#   ein Test der SCHREIB-/STEUER-Endpunkte. Aus den offiziellen Dyness-Protokoll-
+#   PDFs (Junior Box, High-voltage battery, Low-voltage battery, Cygni HA/HS,
+#   AquaVolt/AquaVolt_LV/SolarCube, HT-A/LS Series) ergeben sich 10 v2-Set-
+#   Endpunkte, je nach Produktfamilie unterschiedlich zusammengestellt:
+#
+#     /v2/SetBaseSetting            (Junior Box, Cygni, AquaVolt/SolarCube, HT-A/LS)
+#     /v2/SetWorkModeSetting        (Junior Box, Cygni, AquaVolt/SolarCube, HT-A/LS)
+#     /v2/SetBatterySetting         (High-/Low-voltage battery, Cygni, AquaVolt/SolarCube, HT-A/LS)
+#     /v2/SetLoadControlSetting     (Cygni, AquaVolt/SolarCube)
+#     /v2/SetPeakControlSetting     (Cygni, AquaVolt/SolarCube)
+#     /v2/SetAdvancedSetting        (Cygni, AquaVolt/SolarCube, HT-A/LS)
+#     /v2/SetGeneratorControlSetting(Cygni)
+#     /v2/SetCtrlDataBySN           (HT-A/LS — generischer Register-Zugriff)
+#     /v2/SetDspSetting             (HT-A/LS)
+#     /v2/SetArmSetting             (HT-A/LS)
+#
+#   Welche Produktbezeichnung (Tower T14, TP7, DL5.0C, Stack100, PowerBox Pro/G2,
+#   PowerHaus, ...) zu welcher Dokument-Familie gehört, ist NICHT zweifelsfrei aus
+#   den PDFs ablesbar (dort stehen nur interne Modell-Codes wie "HT-A"/"LS").
+#   Deshalb testet dieses Script bewusst ALLE 10 Endpunkte gegen jede gefundene
+#   Seriennummer — das beantwortet empirisch, was wirklich geht.
+#
+# SICHERHEITSKONZEPT
+#   Gesendet wird NUR {"deviceSn": "..."} — ohne die eigentlichen Steuerparameter
+#   (workMode, powerLimit, loadSwitch, ...). Das reicht, um zu erkennen, ob der
+#   Endpunkt für dieses Gerät existiert:
+#     - 200/Erfolg                  -> Endpunkt vorhanden, Aufruf akzeptiert (bei rein
+#                                      optionalen Zusatzfeldern ändert sich am Gerät
+#                                      nichts, da keine Werte übergeben wurden)
+#     - "Parameter fehlt/erforderlich" -> Endpunkt vorhanden, braucht aber echte Werte
+#     - 404 / "nicht konfiguriert" / "device type mismatch"
+#                                   -> Endpunkt für dieses Gerät NICHT implementiert
+#   Bei einigen Endpunkten (v.a. Junior Box: SetBaseSetting, SetWorkModeSetting) sind
+#   laut PDF ALLE Zusatzfelder Pflichtfelder. Ein deviceSn-only-Aufruf wird dort
+#   voraussichtlich mit einem Validierungsfehler abgelehnt, OHNE dass am Gerät etwas
+#   verändert wird (die Validierung passiert serverseitig vor der Weiterleitung an die
+#   Hardware — Standardverhalten praktisch aller Cloud-APIs; eine 100%ige Garantie
+#   kann es aber nicht geben, da das Verhalten des Dyness-Servers nicht einsehbar ist).
+#
+#   ECHTE Steuerbefehle mit echten Werten sendet dieses Script NIE. Das bleibt bewusst
+#   ein manueller, expliziter zweiter Schritt. Vor dem ersten Schreib-Endpunkt fragt
+#   das Script deshalb ausdrücklich nach einer Bestätigung (JA eintippen).
+# ==============================================================
+
+ASSUME_YES = ("--yes" in sys.argv[1:]) or ("-y" in sys.argv[1:])
 
 SEP  = "=" * 70
 SEP2 = "-" * 70
@@ -124,32 +122,180 @@ def get_signature(secret: str, method: str, content_md5: str, date: str, path: s
     ).decode("utf-8")
 
 
-def _post(base_url: str, path: str, body_dict: dict) -> dict:
-    date = formatdate(timeval=None, localtime=False, usegmt=True)
-    body = json.dumps(body_dict, separators=(',', ':'), sort_keys=True)
-    md5  = get_md5(body)
-    sig  = get_signature(API_SECRET, "POST", md5, date, path)
-    headers = {
-        "Content-Type": "application/json;charset=UTF-8",
-        "Content-MD5":  md5,
-        "Date":         date,
-        "Authorization": f"API {API_ID}:{sig}",
-    }
+# ── HTTP-Layer (identisch zu dyness_test.py v4.3, hier nur POST) ──────────
+
+STATS = {"calls": 0, "rate_limited": 0, "rate_limited_final": 0, "empty": 0, "errors": 0}
+_LAST_CALL = [0.0]
+_SNS = set()   # alle bisher gesehenen Seriennummern (für ANONYMIZE)
+
+_SN_POINTS = {"SUB", "310", "10001", "10010", "10150"}
+_SN_SUFFIX_RE = re.compile(r"(-(?:BMS|BDU|INV|EMS)|-BDU-\d+|-\d{2})$")
+
+
+def _register_sn(v):
+    if not isinstance(v, str):
+        return
+    for part in v.split(","):
+        part = part.strip()
+        if len(part) >= 10 and " " not in part:
+            _SNS.add(part)
+            base = _SN_SUFFIX_RE.sub("", part)
+            if len(base) >= 10:
+                _SNS.add(base)
+
+
+def _scan_sns(obj):
+    """Sammelt SNs aus einer API-Antwort (Keys ...Sn sowie SN-Points)."""
+    if isinstance(obj, dict):
+        if obj.get("pointId") in _SN_POINTS and "pointValue" in obj:
+            _register_sn(obj["pointValue"])
+        for k, v in obj.items():
+            if isinstance(k, str) and k.lower().endswith("sn") and isinstance(v, str):
+                _register_sn(v)
+            elif isinstance(v, (dict, list)):
+                _scan_sns(v)
+    elif isinstance(obj, list):
+        for x in obj:
+            _scan_sns(x)
+
+
+def _throttle():
+    wait = CALL_DELAY - (time.monotonic() - _LAST_CALL[0])
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_CALL[0] = time.monotonic()
+
+
+def _is_rate_limited(res: dict) -> bool:
+    return (str(res.get("code")) == "429" or res.get("_http_status") == 429
+            or str(res.get("sourceCode", "")).upper() == "TOO_MANY_REQUESTS")
+
+
+def _decode(r) -> dict:
+    """HTTP-Antwort -> dict. Leere/ungültige Antworten werden markiert."""
     try:
-        r = requests.post(f"{base_url}{path}", headers=headers,
-                          data=body.encode("utf-8"), timeout=15)
+        j = r.json()
+    except Exception:
+        STATS["empty"] += 1
+        text = (r.text or "")
+        j = {"code": str(r.status_code), "info": text[:300],
+             "_empty_response": not text.strip()}
+    if not isinstance(j, dict):
+        j = {"code": "ERR", "info": "unerwartetes JSON-Format", "data": j}
+    j["_http_status"] = r.status_code
+    _scan_sns(j)
+    return j
+
+
+def _with_retry(label: str, once) -> dict:
+    """Führt einen Call mit Mindestabstand aus; wiederholt bei HTTP 429."""
+    res = {}
+    for attempt in range(MAX_RETRIES + 1):
+        _throttle()
+        STATS["calls"] += 1
+        res = once()
+        if _is_rate_limited(res):
+            STATS["rate_limited"] += 1
+            if attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                print(f"  ⏳ 429 TOO_MANY_REQUESTS ({label}) — warte {wait:.0f}s, "
+                      f"Versuch {attempt + 2}/{MAX_RETRIES + 1}")
+                time.sleep(wait)
+                continue
+            STATS["rate_limited_final"] += 1
+        break
+    return res
+
+
+def _post(base_url: str, path: str, body_dict: dict) -> dict:
+    body = json.dumps(body_dict, separators=(',', ':'), sort_keys=True)
+
+    def once():
+        date = formatdate(timeval=None, localtime=False, usegmt=True)  # pro Versuch neu
+        md5  = get_md5(body)
+        sig  = get_signature(API_SECRET, "POST", md5, date, path)
+        headers = {
+            "Content-Type": "application/json;charset=UTF-8",
+            "Content-MD5":  md5,
+            "Date":         date,
+            "Authorization": f"API {API_ID}:{sig}",
+        }
         try:
-            j = r.json()
-        except Exception:
-            j = {"code": str(r.status_code), "info": r.text[:300]}
-        j["_http_status"] = r.status_code
-        return j
-    except Exception as e:
-        return {"error": str(e), "code": "ERR", "_http_status": None}
+            r = requests.post(f"{base_url}{path}", headers=headers,
+                              data=body.encode("utf-8"), timeout=15)
+        except Exception as e:
+            STATS["errors"] += 1
+            return {"error": str(e), "code": "ERR", "_http_status": None}
+        return _decode(r)
+
+    return _with_retry(path, once)
 
 
 def api_v1(path, body): return _post(API_BASE_V1, path, body)
 def api_v2(path, body): return _post(API_BASE_V2, path, body)
+
+
+# ── Anonymisierung (stdout-Filter, identisch zu dyness_test.py v4.3) ──────
+
+_PII = (r"stationName|stationId|position|imgAddress|imageUrl|address|latitude|"
+        r"longitude|ownerName|userName|nickName|email|phone|mobile")
+_RE_PII_JSON = re.compile(r'("(?:%s)"\s*:\s*)(?:"[^"]*"|-?[\d.]+)' % _PII)
+_RE_PII_KV   = re.compile(r'^(\s*(?:%s)\s*=\s*)(\S.*?)(\s{2,}\(.*)?$' % _PII)
+_SN_CACHE = {"n": -1, "sorted": []}
+
+
+def _mask_sn(sn: str) -> str:
+    m = _SN_SUFFIX_RE.search(sn)
+    suf = m.group(1) if m else ""
+    base = sn[:len(sn) - len(suf)] if suf else sn
+    if len(base) <= 8:
+        return "x" * len(base) + suf
+    return base[:4] + "x" * (len(base) - 8) + base[-4:] + suf
+
+
+def _anon_line(line: str) -> str:
+    if not ANONYMIZE:
+        return line
+    if _SN_CACHE["n"] != len(_SNS):
+        _SN_CACHE["n"] = len(_SNS)
+        _SN_CACHE["sorted"] = sorted(_SNS, key=len, reverse=True)
+    for sn in _SN_CACHE["sorted"]:
+        if sn in line:
+            line = line.replace(sn, _mask_sn(sn))
+    line = _RE_PII_JSON.sub(r'\1"<entfernt>"', line)
+    m = _RE_PII_KV.match(line)
+    if m:
+        line = m.group(1) + "<entfernt>" + (m.group(3) or "")
+    return line
+
+
+class _AnonWriter:
+    """Zeilenweiser Filter vor stdout — maskiert SNs und entfernt Stationsdaten."""
+    def __init__(self, inner):
+        self._inner = inner
+        self._buf = ""
+
+    def write(self, text):
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._inner.write(_anon_line(line) + "\n")
+        return len(text)
+
+    def flush(self):
+        if self._buf:
+            self._inner.write(_anon_line(self._buf))
+            self._buf = ""
+        self._inner.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _install_anonymizer():
+    if ANONYMIZE and not isinstance(sys.stdout, _AnonWriter):
+        sys.stdout = _AnonWriter(sys.stdout)
+        atexit.register(sys.stdout.flush)
 
 
 # ── Endpoint-Registry (aus den offiziellen PDFs extrahiert) ────────────
@@ -226,6 +372,9 @@ NOT_SUPPORTED_HINTS = [
 # konfiguriert"! Ein offline gemeldetes Gerät könnte im Prinzip steuerbar
 # sein, sobald es wieder online ist -- wir wissen es nur gerade nicht.
 OFFLINE_HINTS = ["offline", "device is offline", "not online", "disconnected"]
+# Beobachtet in echten Logs: keine Aussage über das Gerät.
+TRANSIENT_HINTS = ["network anomaly"]
+NOT_BOUND_HINTS = ["not bound"]
 
 # Die tatsächlichen Pflichtfeld-Namen aus den PDFs, je Endpunkt (nur die
 # Felder, die in MINDESTENS einem der Dokumente als "Yes"/Pflicht markiert
@@ -247,9 +396,18 @@ KNOWN_FIELD_NAMES = {
     "/v2/SetArmSetting": ["extelectricmeter"],
 }
 
+# Klassen, die KEINE Aussage über die Steuerbarkeit erlauben.
+INCONCLUSIVE = {"RATE_LIMIT", "LEERE_ANTWORT", "VORUEBERGEHEND", "NICHT_GEBUNDEN", "UNKLAR"}
+
 
 def classify(path: str, result: dict) -> str:
-    """Ordnet die Server-Antwort einer von vier Kategorien zu."""
+    """Ordnet die Server-Antwort einer Kategorie zu."""
+    # Technische Nicht-Antworten zuerst: sie sagen nichts über das Gerät aus.
+    if _is_rate_limited(result):
+        return "RATE_LIMIT"
+    if result.get("_empty_response"):
+        return "LEERE_ANTWORT"
+
     http_status = result.get("_http_status")
     code = str(result.get("code", ""))
     info = str(result.get("info", "")).lower()
@@ -258,6 +416,10 @@ def classify(path: str, result: dict) -> str:
         return "NICHT_VERFUEGBAR"
     if any(h in info for h in OFFLINE_HINTS):
         return "GERAET_OFFLINE"
+    if any(h in info for h in TRANSIENT_HINTS):
+        return "VORUEBERGEHEND"
+    if any(h in info for h in NOT_BOUND_HINTS):
+        return "NICHT_GEBUNDEN"
     if any(h in info for h in NOT_SUPPORTED_HINTS):
         return "NICHT_VERFUEGBAR"
 
@@ -279,21 +441,22 @@ def classify(path: str, result: dict) -> str:
 
 
 LABELS = {
-    "VALIDIERT":        "✅ steuerbar (Server nennt echten Parameter aus dem PDF)",
+    "VALIDIERT":         "✅ steuerbar (Server nennt echten Parameter aus dem PDF)",
     "PFLICHTFELD_FEHLT": "🟡 Endpunkt vorhanden (Validierungsfehler, Feld unklar)",
-    "OK_GENERISCH":     "⚠️  200 OK, aber OHNE Feldbezug — evtl. nur generisches No-Op",
-    "NICHT_VERFUEGBAR": "❌ nicht verfügbar für dieses Gerät",
-    "GERAET_OFFLINE":   "📡 Gerät offline (v2 kennt es, kann es aber gerade nicht erreichen)",
-    "UNKLAR":           "❔ unklar — Rohantwort prüfen",
+    "OK_GENERISCH":      "⚠️  200 OK, aber OHNE Feldbezug — evtl. nur generisches No-Op",
+    "NICHT_VERFUEGBAR":  "❌ nicht verfügbar für dieses Gerät",
+    "GERAET_OFFLINE":    "📡 Gerät offline (v2 kennt es, kann es aber gerade nicht erreichen)",
+    "RATE_LIMIT":        "⏳ Rate-Limit (HTTP 429) auch nach Wiederholungen — keine Aussage möglich",
+    "LEERE_ANTWORT":     "📭 leere/ungültige Antwort (Server-Störung?) — keine Aussage möglich",
+    "VORUEBERGEHEND":    "⏳ vorübergehender Server-Fehler ('Network Anomaly') — später erneut testen",
+    "NICHT_GEBUNDEN":    "🔗 SN nicht an das Konto gebunden — keine Aussage möglich",
+    "UNKLAR":            "❔ unklar — Rohantwort prüfen",
 }
 
 
 def probe_body(sn: str, path: str) -> dict:
-    """Baut den *sicheren* Test-Body: nur deviceSn, keine echten
-    Steuerwerte. Wird ALLOW_REQUIRED_FIELD_PROBE genutzt, ändert sich
-    hier nichts — der Schalter dient nur der Dokumentation/Erweiterung
-    und sendet bewusst weiterhin keine operativen Werte, solange du diese
-    Funktion nicht selbst um echte Werte ergänzt."""
+    """Baut den *sicheren* Test-Body: nur deviceSn, keine echten Steuerwerte.
+    Dieses Script sendet bewusst NIE operative Werte (siehe SICHERHEITSKONZEPT)."""
     return {"deviceSn": sn}
 
 
@@ -313,19 +476,15 @@ def print_device_report(sn: str, model_name: str, results: dict):
     print(SEP)
     print(f"  Steuer-Endpunkt-Report: {sn}  [{model_name}]")
     print(SEP)
-    any_validated = False
-    any_maybe = False
-    any_generic = False
-    any_offline = False
+    any_validated = any_maybe = any_generic = any_offline = False
+    n_inconclusive = 0
     all_not_available = True
     for ep in SET_ENDPOINTS:
         klass, res = results[ep["path"]]
-        label = LABELS[klass]
-        print(f"  {ep['path']:<32} {label}")
+        print(f"  {ep['path']:<32} {LABELS[klass]}")
         # Rohantwort IMMER zeigen
-        info = res.get("info", "")
-        code = res.get("code", "")
-        print(f"      -> code={code!r}  info={info!r}  http={res.get('_http_status')}")
+        print(f"      -> code={res.get('code', '')!r}  info={res.get('info', '')!r}  "
+              f"http={res.get('_http_status')}")
         if klass == "VALIDIERT":
             any_validated = True
         elif klass == "PFLICHTFELD_FEHLT":
@@ -334,6 +493,8 @@ def print_device_report(sn: str, model_name: str, results: dict):
             any_generic = True
         elif klass == "GERAET_OFFLINE":
             any_offline = True
+        elif klass in INCONCLUSIVE:
+            n_inconclusive += 1
         if klass != "NICHT_VERFUEGBAR":
             all_not_available = False
     print(SEP2)
@@ -353,6 +514,11 @@ def print_device_report(sn: str, model_name: str, results: dict):
         verdict = ("UNKLAR (GERÄT OFFLINE) — v2 kennt dieses Gerät grundsätzlich, kann es "
                    "aber gerade nicht erreichen. Keine Aussage über Steuerbarkeit möglich, "
                    "solange das Gerät nicht online ist. Bitte später erneut testen.")
+    elif n_inconclusive:
+        verdict = (f"UNVOLLSTÄNDIG — {n_inconclusive} von {len(SET_ENDPOINTS)} Endpunkten ohne "
+                   "verwertbare Antwort (Rate-Limit, leere Antwort, Server-Fehler, nicht "
+                   "gebunden oder unklar). Daraus folgt KEIN Urteil über die Steuerbarkeit. "
+                   "Bitte erneut testen (HA-Integration vorher kurz deaktivieren).")
     elif all_not_available:
         verdict = ("KOMPLETT 'NOT CONFIGURED' — das betrifft hier ALLE Endpunkte, nicht nur "
                    "die Steuerung. Das deutet eher auf 'v2 ist für dieses Gerät/Konto generell "
@@ -369,6 +535,8 @@ def print_device_report(sn: str, model_name: str, results: dict):
 
 def discover_devices():
     if MANUAL_DEVICE_SNS:
+        for sn in MANUAL_DEVICE_SNS:
+            _register_sn(sn)
         return [{"deviceSn": sn, "deviceModelName": "?"} for sn in MANUAL_DEVICE_SNS]
 
     res = api_v1("/v1/device/storage/list", {})
@@ -423,12 +591,53 @@ def fetch_v2_device_list() -> list:
     return []
 
 
+# ── Sicherheitsabfrage vor dem ersten Schreib-Endpunkt ────────────────────
+
+def confirm_write_probe(plan: list) -> bool:
+    """Zeigt, was gesendet wird, und verlangt eine ausdrückliche Bestätigung."""
+    print(SEP)
+    print("  ⚠️  BITTE VOR DEM START LESEN")
+    print(SEP)
+    print(f"  Als Nächstes werden {len(SET_ENDPOINTS)} SCHREIB-Endpunkte (/v2/Set...) je Gerät")
+    print("  angesprochen — mit NUR der Seriennummer, OHNE Steuerwerte.")
+    print("  Erwartet wird eine Fehlermeldung wie 'Pflichtfeld fehlt'. An deinem Gerät")
+    print("  soll sich dadurch nichts ändern. Eine 100%ige Garantie gibt es nicht, weil")
+    print("  die Prüfung auf Dyness-Seite passiert (siehe SICHERHEIT in dieser Datei).")
+    print()
+    print("  Geräte:")
+    for item in plan:
+        print(f"    {item['v2_sn']}  [{item['model']}]")
+    print("  Endpunkte:")
+    for ep in SET_ENDPOINTS:
+        print(f"    POST {ep['path']}")
+    print(SEP)
+    if ASSUME_YES:
+        print("  --yes angegeben: Sicherheitsabfrage übersprungen.")
+        print()
+        return True
+    print("  Zum Fortfahren JA eintippen (alles andere bricht ab): ", end="", flush=True)
+    try:
+        answer = input().strip().upper()
+    except EOFError:
+        print()
+        print("  Keine Eingabe möglich (kein Terminal). Abgebrochen — mit --yes startbar.")
+        return False
+    print()
+    return answer in ("JA", "YES")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 def main():
+    _install_anonymizer()
     print(SEP)
-    print("  Dyness v2 Control-Capability Probe")
+    print(f"  Dyness v2 Control-Capability Probe v{SCRIPT_VERSION}")
     print(f"  v2-Domain: {API_BASE_V2}")
+    print(f"  Start: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC   |   "
+          f"CALL_DELAY={CALL_DELAY}s  MAX_RETRIES={MAX_RETRIES}  ANONYMIZE={ANONYMIZE}")
+    print("  Hinweis: Bitte NICHT parallel zu einem laufenden HA-Poll starten (sonst HTTP 429).")
+    if ANONYMIZE:
+        print("  Anonymisierung aktiv: Seriennummern maskiert (erste/letzte 4 Zeichen bleiben).")
     print(SEP)
     print()
 
@@ -446,14 +655,15 @@ def main():
                   f"comm={e.get('communicationStatus','?')} work={e.get('workStatus','?')}")
         print()
 
-    summary = []
-    all_checks_ever_not_available = True   # für Gesamt-Diagnose unten
+    # ── Phase 1: nur LESEN — Erreichbarkeit je SN-Kandidat prüfen ─────
+    plan = []
     for dev in devices:
         v1_sn = dev.get("deviceSn", "")
+        if not v1_sn:
+            continue
         model = dev.get("deviceModelName", "?")
         candidates = gather_sn_candidates(v1_sn, device_list_entries)
 
-        # Erreichbarkeit über ALLE Kandidaten prüfen (nicht nur einen Fallback)
         v2_sn = candidates[0]
         chosen = False
         checked = []
@@ -461,7 +671,9 @@ def main():
             check = api_v2("/v2/GetDeviceInfBySN", {"deviceSn": cand})
             klass = classify("/v2/GetDeviceInfBySN", check)
             checked.append((cand, klass, check.get("info", "")))
-            if klass not in ("NICHT_VERFUEGBAR",) and not chosen:
+            # Nur eine echte Antwort darf einen Kandidaten "wählen" — Rate-Limit,
+            # leere Antworten usw. sagen nichts über die SN-Schreibweise.
+            if klass not in ("NICHT_VERFUEGBAR",) + tuple(INCONCLUSIVE - {"UNKLAR"}) and not chosen:
                 v2_sn = cand
                 chosen = True
 
@@ -471,16 +683,36 @@ def main():
                 marker = " <-- gewählt" if cand == v2_sn else ""
                 print(f"    {cand:<28} {LABELS.get(klass, klass):<55} ({info!r}){marker}")
             print()
+        plan.append({"v1_sn": v1_sn, "model": model, "v2_sn": v2_sn, "chosen": chosen})
 
+    if not plan:
+        return
+
+    # ── Phase 2: Bestätigung vor dem ersten SCHREIB-Endpunkt ───────────
+    if not confirm_write_probe(plan):
+        print("  Abgebrochen. Es wurde KEIN Schreib-Endpunkt angesprochen.")
+        _print_stats()
+        return
+
+    # ── Phase 3: Schreib-Endpunkte (nur SN) ────────────────────────────
+    print(f"  Bestätigung: {'--yes' if ASSUME_YES else 'interaktiv (JA)'}")
+    print()
+    summary = []
+    all_checks_ever_not_available = True   # für Gesamt-Diagnose unten
+    for item in plan:
+        v2_sn, model, chosen = item["v2_sn"], item["model"], item["chosen"]
         results = probe_device(v2_sn)
         print_device_report(v2_sn, model, results)
 
-        validated = [p for p, (k, _) in results.items() if k == "VALIDIERT"]
-        maybe_paths = [p for p, (k, _) in results.items() if k == "PFLICHTFELD_FEHLT"]
-        generic = [p for p, (k, _) in results.items() if k == "OK_GENERISCH"]
-        offline = [p for p, (k, _) in results.items() if k == "GERAET_OFFLINE"]
-        not_avail = [p for p, (k, _) in results.items() if k == "NICHT_VERFUEGBAR"]
-        summary.append((v2_sn, model, validated, maybe_paths, generic, offline, not_avail))
+        by_class = lambda k: [p for p, (c, _) in results.items() if c == k]
+        validated = by_class("VALIDIERT")
+        maybe_paths = by_class("PFLICHTFELD_FEHLT")
+        generic = by_class("OK_GENERISCH")
+        offline = by_class("GERAET_OFFLINE")
+        not_avail = by_class("NICHT_VERFUEGBAR")
+        inconclusive = [p for p, (c, _) in results.items() if c in INCONCLUSIVE]
+        summary.append((v2_sn, model, validated, maybe_paths, generic, offline,
+                        not_avail, inconclusive))
 
         if not chosen or len(not_avail) < len(SET_ENDPOINTS):
             all_checks_ever_not_available = False
@@ -489,7 +721,7 @@ def main():
     print(SEP)
     print("  GESAMT-ZUSAMMENFASSUNG")
     print(SEP)
-    for sn, model, validated, maybe_paths, generic, offline, not_avail in summary:
+    for sn, model, validated, maybe_paths, generic, offline, not_avail, inconclusive in summary:
         if validated:
             status = f"STEUERBAR ({', '.join(validated)})"
         elif maybe_paths:
@@ -498,6 +730,9 @@ def main():
             status = f"UNSICHER, nur generisches 200-OK ({', '.join(generic)})"
         elif offline and len(offline) == len(SET_ENDPOINTS):
             status = "GERÄT OFFLINE (v2 kennt es, aktuell nicht erreichbar)"
+        elif inconclusive:
+            status = (f"UNVOLLSTÄNDIG ({len(inconclusive)} von {len(SET_ENDPOINTS)} Endpunkten "
+                      "ohne verwertbare Antwort — kein Urteil)")
         elif len(not_avail) == len(SET_ENDPOINTS):
             status = "ALLE Endpunkte 'not configured' (siehe Diagnose unten)"
         else:
@@ -518,9 +753,20 @@ def main():
         print("   -> Beim Dyness-Support gezielt nach v2-Freischaltung fragen,")
         print("      nicht nur nach der Steuerungsfrage.")
 
+    _print_stats()
     print()
     print("Bitte diesen Report als Kommentar/Issue teilen:")
     print("https://github.com/shopf/dyness_battery")
+
+
+def _print_stats():
+    print()
+    print(f"  Aufruf-Statistik: Calls: {STATS['calls']}   HTTP-429: {STATS['rate_limited']} "
+          f"(nach Retries weiter 429: {STATS['rate_limited_final']})   "
+          f"leere/ungültige Antworten: {STATS['empty']}   Verbindungsfehler: {STATS['errors']}")
+    if STATS["rate_limited_final"]:
+        print("  ⚠️  Einzelne Antworten fehlen wegen Rate-Limit. Bitte HA-Integration kurz "
+              "deaktivieren und das Skript erneut starten.")
 
 
 if __name__ == "__main__":
