@@ -1,16 +1,45 @@
 """Sensoren für Dyness Battery Integration."""
 import logging
+import re
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
     PERCENTAGE, UnitOfPower, UnitOfElectricCurrent, UnitOfEnergy,
     UnitOfTemperature, UnitOfElectricPotential, UnitOfFrequency,
+    __version__ as _HA_VERSION,
 )
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _ha_version_at_least(major: int, minor: int) -> bool:
+    """True, wenn HA >= major.minor (Beta-/Dev-Suffixe egal). Nicht lesbar -> False."""
+    m = re.match(r"(\d+)\.(\d+)", str(_HA_VERSION))
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= (major, minor)
+
+
+# Ab HA 2026.8 ist DeviceInfo["via_device"] (Identifier-Tupel) veraltet (Warnung, entfällt
+# mit HA 2027.8) -> stattdessen via_device_id (Geräte-ID des Hauptgeräts). Ältere HA-Versionen
+# kennen via_device_id nicht und behalten den bisherigen Weg.
+# TODO: Beim Anheben der Mindestversion auf >= 2026.8 (2.7.0/2.8.0) Weiche + via_device entfernen.
+_USE_VIA_DEVICE_ID = _ha_version_at_least(2026, 8)
+
+
+def _main_device_info(coordinator) -> dict:
+    """device_info des Hauptgeräts (Pack) — gemeinsam für die Haupt-Sensoren und das
+    explizite Anlegen des Hauptgeräts, damit beide immer dieselben Werte setzen."""
+    di = coordinator.device_info
+    return {
+        "identifiers": {(DOMAIN, coordinator.device_sn)},
+        "name": di.get("stationName", "Dyness Battery"),
+        "manufacturer": "Dyness",
+        "model": di.get("deviceModelName", "Dyness Battery"),
+        "sw_version": di.get("firmwareVersion"),
+    }
 
 # (key, translation_key, unit, device_class, state_class, icon, precision, entity_category)
 _D = EntityCategory.DIAGNOSTIC
@@ -140,6 +169,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]
     available_data = coordinator.data or {}
     schema = available_data.get("_schema", "unknown")
+
+    # Das Hauptgerät muss existieren, bevor Modul-Geräte per via_device_id darauf verweisen
+    # (Hauptsensoren und Modulsensoren werden unten nur eingeplant, die Reihenfolge wäre
+    # sonst nicht garantiert).
+    if _USE_VIA_DEVICE_ID:
+        try:
+            dr.async_get(hass).async_get_or_create(
+                config_entry_id=entry.entry_id, **_main_device_info(coordinator)
+            )
+        except Exception as err:  # noqa: BLE001 — nur Verknüpfung der Module betroffen
+            _LOGGER.warning(
+                "Dyness: Hauptgerät konnte nicht vorab angelegt werden (%s) — "
+                "Modul-Geräte werden ggf. nicht mit dem Hauptgerät verknüpft", err
+            )
 
     # Pack-Level Sensoren — schema-basiert filtern
     known_pack_keys: set = set()
@@ -293,14 +336,7 @@ class DynessSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
-        di = self.coordinator.device_info
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.device_sn)},
-            "name": di.get("stationName", "Dyness Battery"),
-            "manufacturer": "Dyness",
-            "model": di.get("deviceModelName", "Dyness Battery"),
-            "sw_version": di.get("firmwareVersion"),
-        }
+        return _main_device_info(self.coordinator)
 
     @property
     def native_value(self):
@@ -357,6 +393,8 @@ class DynessModuleSensor(CoordinatorEntity, SensorEntity):
                  translation_key, unit, device_class, state_class, icon,
                  precision=None, enabled_default=True):
         super().__init__(coordinator)
+        self._entry_id    = entry.entry_id
+        self._via_device_id = None
         self._module_id   = module_id
         self._data_key    = data_key
         self._attr_translation_key                 = translation_key
@@ -370,15 +408,36 @@ class DynessModuleSensor(CoordinatorEntity, SensorEntity):
         if precision is not None:
             self._attr_suggested_display_precision = precision
 
+    def _resolve_via_device_id(self):
+        """Geräte-ID des Hauptgeräts (neuer Pfad, HA >= 2026.8); None, wenn nicht auffindbar."""
+        if self._via_device_id is None:
+            try:
+                main = dr.async_get(self.coordinator.hass).async_get_device_by_identifier(
+                    (DOMAIN, self.coordinator.device_sn), self._entry_id
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Dyness: Hauptgerät für Modul %s nicht ermittelbar: %s",
+                              self._module_id, err)
+                main = None
+            if main is not None:
+                self._via_device_id = main.id
+        return self._via_device_id
+
     @property
     def device_info(self):
-        return {
+        info = {
             "identifiers": {(DOMAIN, f"{self.coordinator.device_sn}_{self._module_id}")},
             "name": f"Dyness Module {self._module_id}",
             "manufacturer": "Dyness",
             "model": "Battery Module",
-            "via_device": (DOMAIN, self.coordinator.device_sn),
         }
+        if not _USE_VIA_DEVICE_ID:
+            info["via_device"] = (DOMAIN, self.coordinator.device_sn)  # HA < 2026.8
+        else:
+            via_id = self._resolve_via_device_id()
+            if via_id is not None:
+                info["via_device_id"] = via_id
+        return info
 
     @property
     def native_value(self):

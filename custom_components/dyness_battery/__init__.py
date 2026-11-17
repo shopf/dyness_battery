@@ -399,6 +399,7 @@ SCHEMA_JUNIOR       = "junior"
 SCHEMA_POWERBRICK    = "powerbrick"
 SCHEMA_POWERBRICK_SC = "powerbrick_sc"
 SCHEMA_CYGNI         = "cygni"
+SCHEMA_AQUAVOLT      = "aquavolt"
 SCHEMA_UNKNOWN       = "unknown"
 
 # Explizite Model → Schema Mapping
@@ -435,9 +436,15 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "POWERBRICK":       SCHEMA_POWERBRICK,   # modelCode 43
     # Junior Box
     "JUNIOR-BOX":       SCHEMA_JUNIOR,   # modelCode 1
-    # Cygni Hybrid-Wechselrichter
+    # Hybrid-Wechselrichter
     "CYGNI":            SCHEMA_CYGNI,   # Cygni 10.0HS-M8 modelCode 192
+    "D2.5-LAC":         SCHEMA_AQUAVOLT,  # AquaVolt D2.5-LAC modelCode 207
+    "D3.6-LAC":         SCHEMA_AQUAVOLT,
 }
+
+# AquaVolt Batteriestatus (Point 173):
+# 1 = Standby/Ruhe (auch bei kleinem Reststrom, z.B. +31 W), 2 = Entladen, 3 = Laden
+_AQUAVOLT_BATTERY_STATE = {1: "Standby", 2: "Discharging", 3: "Charging"}
 
 
 def _detect_schema(device_model_name: str, rt: dict) -> str:
@@ -1256,6 +1263,57 @@ class DynessDataCoordinator(DataUpdateCoordinator):
             _LOGGER.warning(
                 "Dyness: known_module_sns konnte nicht gespeichert werden: %s", err
             )
+
+    def _apply_aquavolt_flow(self, data: dict) -> None:
+        """AquaVolt D2.5-LAC / D3.6-LAC
+
+        Die generische getLastRunningData-Auswertung übernimmt activePower als gridPower
+        (bei AquaVolt die Wechselrichter-Leistung, nicht die Netzleistung), batteryPower
+        ohne Vorzeichenkorrektur und berechnet batteryStatus aus realTimePower. Auch
+        getLastPowerDataBySn liefert realTimePower/-Current mit Rohvorzeichen und
+        Verzögerung. Alles Vorzeichen-Kritische steht deshalb gebündelt hier.
+
+        Belegt mit Logs im Zustand Laden, Entladen und Ruhe (ein- und dreiphasig):
+        - Batterie 171/172 (und running data batteryPower): ROH negativ = Laden,
+          positiv = Entladen. Konvention der Integration (wie Cygni): positiv = Laden.
+        - Point 173: 1 = Standby, 2 = Entladen, 3 = Laden. Hat Vorrang vor dem
+          Leistungsvorzeichen, denn im Ruhezustand fließen noch ~30 W.
+        - Netz 268/272/276 (R/S/T): positiv = Einspeisung -> gridPower = -(Summe),
+          positiv = Netzbezug (stimmt mit dem P1-Zähler überein).
+        """
+        rt = self.realtime_data or {}
+        rd = self.running_data or {}
+
+        # ── Batterie ──────────────────────────────────────────────────────────
+        power = _to_float(rt.get("172"))
+        if power is None:
+            power = _to_float(rd.get("batteryPower"))
+        current = _to_float(rt.get("171"))
+
+        # Rohwerte aus der generischen Auswertung verwerfen (falsches Vorzeichen)
+        data.pop("realTimePower", None)
+        data.pop("realTimeCurrent", None)
+        if power is not None:
+            data["realTimePower"] = 0.0 - power      # 0.0 - x vermeidet "-0.0"
+        if current is not None:
+            data["realTimeCurrent"] = 0.0 - current
+
+        state = _to_float(rt.get("173"))
+        status = _AQUAVOLT_BATTERY_STATE.get(int(state)) if state is not None else None
+        if status is None and power is not None:
+            flow = 0.0 - power
+            status = "Charging" if flow > 10 else "Discharging" if flow < -10 else "Standby"
+        if status is not None:
+            data["batteryStatus"] = status
+        else:
+            data.pop("batteryStatus", None)
+
+        # ── Netz ──────────────────────────────────────────────────────────────
+        phases = [v for v in (_to_float(rt.get(p)) for p in ("268", "272", "276")) if v is not None]
+        if phases:
+            data["gridPower"] = round(0.0 - sum(phases), 1)
+        else:
+            data.pop("gridPower", None)           # activePower wäre die falsche Größe
 
     async def _fetch_v2_battery_info(self, session) -> dict | None:
         """v2 GetRealTimeDataBySN -> data.batteryInfo (Tower + Stack100).
@@ -2643,6 +2701,46 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             data.get("cycleCount"), data.get("firmwareVersion"),
                         )
 
+                    elif schema == SCHEMA_AQUAVOLT:
+                        # AquaVolt D2.5-LAC / D3.6-LAC — Hybrid-Wechselrichter
+                        #
+                        # Wie Cygni (Batterie 170-173, 2003-2011). Belegt mit Logs im Zustand
+                        # Laden, Entladen und Ruhe:
+                        # - Energiezähler 195-196 / 197 / 198-199 / 200 == v2 GetTotalEnergyDataBySN
+                        #   == Dyness-App (inkl. Point 200 = Entladung heute)
+                        # - Point 2024 und "batteryCapacity" aus v1/v2 sind eine KOPIE des SOC
+                        #   -> nicht verwenden. Kapazität kommt aus station/info (generische
+                        #   Logik oben), usableKwh/remainingKwh aus dem SOC-Fallback unten.
+                        # - Batterie-Fluss (171/172/173) und Netzleistung (268/272/276) werden
+                        #   in _apply_aquavolt_flow() gesetzt (Vorzeichen-Logik).
+                        _rt_set("packVoltage", "170")
+                        _rt_set("soc",         "2010")
+                        _rt_set("soh",         "2011")
+                        _rt_set("temp",        "2003")
+
+                        cl = _to_float(rt.get("2004"))
+                        dl = _to_float(rt.get("2005"))
+                        if cl is not None and cl > 0:
+                            data["chargeCurrentLimit"]    = cl
+                        if dl is not None and dl > 0:
+                            data["dischargeCurrentLimit"] = dl
+
+                        for _key, _pid in (("energyChargeTotal",    "195-196"),
+                                           ("energyChargeDay",      "197"),
+                                           ("energyDischargeTotal", "198-199"),
+                                           ("energyDischargeDay",   "200")):
+                            _val = _to_float(rt.get(_pid))
+                            if _val is not None:
+                                data[_key] = _val
+
+                        _LOGGER.debug(
+                            "Dyness AquaVolt: packVoltage=%s V, SOC=%s%%, SOH=%s%%, temp=%s°C, "
+                            "Laden gesamt=%s kWh, Entladen gesamt=%s kWh",
+                            data.get("packVoltage"), data.get("soc"), data.get("soh"),
+                            data.get("temp"), data.get("energyChargeTotal"),
+                            data.get("energyDischargeTotal"),
+                        )
+
                     elif schema == SCHEMA_CYGNI:
                         # Cygni 10.0HS-M8 Schema — Hybrid-Wechselrichter
                         #
@@ -3011,6 +3109,9 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                                     )
                         except (ValueError, TypeError):
                             pass
+                    if schema == SCHEMA_AQUAVOLT:
+                        self._apply_aquavolt_flow(data)
+
                     return data
 
             except UpdateFailed:

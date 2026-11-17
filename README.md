@@ -17,6 +17,7 @@ Eine Community-Integration für Home Assistant für **Dyness Batteriespeicher** 
 
 | Gerät | Status |
 |-------|--------|
+| Dyness AquaVolt D2.5-LAC / D3.6-LAC | ✅ Getestet |
 | Dyness Cygni 10.0HS | ✅ Getestet |
 | Dyness DL5.0C | ✅ Getestet |
 | Dyness Junior Box | ✅ Getestet + Steuerung möglich |
@@ -170,6 +171,7 @@ Du hast ein anderes Dyness-Modell und möchtest es hinzufügen lassen? Erstelle 
 
 | Device | Status |
 |--------|--------|
+| Dyness AquaVolt D2.5-LAC / D3.6-LAC | ✅ Tested |
 | Dyness Cygni 10.0HS | ✅ Tested |
 | Dyness DL5.0C | ✅ Tested |
 | Dyness Junior Box | ✅ Tested + controllable |
