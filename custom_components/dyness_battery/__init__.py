@@ -421,6 +421,7 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "STACK100-10S":     SCHEMA_STACK100,   # modelCode 53
     # DL5 Familie
     "DL5.0C":           SCHEMA_DL5,   # modelCode 15
+    "DL5.0F":           SCHEMA_DL5,
     # PowerBox G2
     "POWERBOX-G2":      SCHEMA_POWERBOX_G2,   # modelCode 42
     # PowerBox Pro / PowerHaus
