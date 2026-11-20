@@ -412,6 +412,7 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
     "TOWER-PRO-TP7":    SCHEMA_TOWER,   # modelCode 7 "Tower Pro TP7"  → TOWER-PRO-TP7
     "TOWER-PRO-TP11":   SCHEMA_TOWER,   # "Tower Pro TP11" → TOWER-PRO-TP11
     "TOWER-PRO-TP15":   SCHEMA_TOWER,   # "Tower Pro TP15" → TOWER-PRO-TP15
+    "TOWER-PRO-TP19":   SCHEMA_TOWER,   # modelCode 10
     "TOWER-TP7":        SCHEMA_TOWER,   # Fallback falls API ohne "Pro"
     "TOWER-TP11":       SCHEMA_TOWER,
     "TOWER-TP15":       SCHEMA_TOWER,
@@ -445,6 +446,32 @@ _MODEL_SCHEMA_MAP: dict[str, str] = {
 # AquaVolt Batteriestatus (Point 173):
 # 1 = Standby/Ruhe (auch bei kleinem Reststrom, z.B. +31 W), 2 = Entladen, 3 = Laden
 _AQUAVOLT_BATTERY_STATE = {1: "Standby", 2: "Discharging", 3: "Charging"}
+
+# PowerBrick: Nennspannung eines Moduls = 16 Zellen (Point 14200) x 3,2 V (LFP)
+_PB_NOMINAL_V = 51.2
+
+
+def _powerbrick_capacity_kwh(station_kwh, n_modules, module_ah, soh=None, tol=0.15):
+    """Systemkapazität (kWh) eines PowerBrick-Systems oder None (-> station_info unverändert).
+
+    station/info.batteryCapacity entspricht bei PowerBrick der Zahl der in der Station
+    REGISTRIERTEN Geräte x 14,336 kWh; Sub-Module (SUB) zählen nicht mit.
+    Daher dient station_info nur als Nenn-Anker: Aus dem Verhältnis zur Modul-Kapazität
+    (Point 14100 = Nenn-Ah x SOH) ergibt sich ganzzahlig k = Anzahl Modul-Einheiten, die
+    station_info enthält. Systemkapazität = station_info x Module dieses Eintrags / k.
+    Ist das Verhältnis nicht ganzzahlig (Toleranz relativ), wird nichts geändert.
+    """
+    ah = [a for a in module_ah if a is not None and a > 100]
+    if station_kwh is None or station_kwh <= 0 or n_modules < 1 or not ah:
+        return None
+    nominal_ah = sum(ah) / len(ah)
+    if soh is not None and 50 < soh <= 100:
+        nominal_ah /= soh / 100.0          # 14100 ist SOH-bereinigt (277,2 Ah = 280 x 0,99)
+    ratio = station_kwh / (nominal_ah * _PB_NOMINAL_V / 1000.0)
+    k = round(ratio)
+    if k < 1 or abs(ratio - k) / k > tol:
+        return None
+    return round(station_kwh * n_modules / k, 3)
 
 
 def _detect_schema(device_model_name: str, rt: dict) -> str:
@@ -842,6 +869,7 @@ class DynessDataCoordinator(DataUpdateCoordinator):
         # auf die nächste vollständige SUB-Antwort der API warten zu müssen.
         _persisted = config_entry.data.get("known_module_sns", []) if config_entry else []
         self._module_sns: list[str] = list(_persisted)
+        self._pb_capacity_cache: float | None = None   # letzte gültige PowerBrick-Systemkapazität
         # known_single_sub_sn wird bewusst nicht persistiert — wird nach dem
         # ersten erfolgreichen Poll aus SUB gesetzt. Persistenz würde
         # async_update_entry aus _async_update_data erfordern.
@@ -1263,6 +1291,32 @@ class DynessDataCoordinator(DataUpdateCoordinator):
             _LOGGER.warning(
                 "Dyness: known_module_sns konnte nicht gespeichert werden: %s", err
             )
+
+    def _powerbrick_system_capacity(self, rt: dict):
+        """PowerBrick-Systemkapazität in kWh (siehe _powerbrick_capacity_kwh); None, wenn weder
+        station_info noch ein früherer gültiger Wert vorliegt."""
+        station = _to_float(self.station_info.get("batteryCapacity"))
+        ah = [m.get("cap_ah") for m in (self.module_data or {}).values() if isinstance(m, dict)]
+        ah = [a for a in ah if a is not None and a > 100]
+        if not ah:
+            # Variante B / Einzelmodul: der Master ist selbst das Modul (Point 14100 am Master)
+            single = _to_float(rt.get("14100"))
+            if single is not None and single > 100:
+                ah = [single]
+        n400 = _to_float(rt.get("400"))
+        n_modules = max(int(n400) if n400 is not None and n400 >= 1 else 1, len(ah))
+        cap = _powerbrick_capacity_kwh(station, n_modules, ah, _to_float(rt.get("1200")))
+        if cap is not None:
+            self._pb_capacity_cache = cap
+            if station is not None and abs(cap - station) > 0.001:
+                _LOGGER.debug(
+                    "Dyness PowerBrick: batteryCapacity = %s kWh (station_info %s kWh, %d Modul(e), "
+                    "Modul-Ah %s)", cap, station, n_modules, ah
+                )
+            return cap
+        if not ah and self._pb_capacity_cache is not None:
+            return self._pb_capacity_cache      # Moduldaten gerade nicht erreichbar
+        return station
 
     def _apply_aquavolt_flow(self, data: dict) -> None:
         """AquaVolt D2.5-LAC / D3.6-LAC
@@ -2342,15 +2396,12 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                         #
                         # Erkennung: Point 600 vorhanden → Variante A, sonst Variante B
                         #
-                        # batteryCapacity: station_info liefert für PowerBrick bereits
-                        # die GESAMTKAPAZITÄT des Systems — NICHT mit Modulanzahl multiplizieren.
-                        bc_pb = _to_float(self.station_info.get("batteryCapacity"))
+                        # batteryCapacity: station_info ist bei PowerBrick nicht eindeutig (mal die
+                        # Systemkapazität, mal nur ein Modul oder die Summe mehrerer Geräte) ->
+                        # Systemkapazität aus Modulzahl und Modul-Ah, siehe _powerbrick_capacity_kwh.
+                        bc_pb = self._powerbrick_system_capacity(rt)
                         if bc_pb is not None:
                             data["batteryCapacity"] = bc_pb
-                            _LOGGER.debug(
-                                "Dyness PowerBrick: batteryCapacity = %s kWh (direkt aus station_info)",
-                                bc_pb
-                            )
 
                         _pb_var_a = rt.get("600") is not None and rt.get("600") != ""
 
@@ -3217,6 +3268,10 @@ def _parse_module_points(sn: str, mid: str, pts: dict) -> dict:
         # 13600/13800 als Fallback (alternative Einheit, weniger zuverlässig).
         cap14000 = _to_float(g("14000"))
         cap14100 = _to_float(g("14100"))
+        # cap_ah: Point 14100 (Ist-Ah = Nenn-Ah x SOH), unabhängig von Point 14000. Bei niedrigem
+        # SOC (14000 <= 100 Ah) fällt total_ah unten auf Point 13800 zurück — der ist als Kapazität
+        # unbrauchbar. Nur für die PowerBrick-Systemkapazität verwendet.
+        d["cap_ah"] = cap14100 if (cap14100 is not None and cap14100 > 100) else None
         if cap14000 is not None and cap14000 > 100:
             # Ah-Werte (nicht SOC%) → für kWh-Berechnung verwenden
             d["remain_ah"] = cap14000

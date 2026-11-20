@@ -53,13 +53,37 @@ async def _fetch_device_list(api_id: str, api_secret: str, api_base: str) -> lis
 
 
 def _select_bms_devices(device_list: list) -> list:
-    """Filtert BMS/BDU Geräte — ein Eintrag pro physischem Gerät."""
-    bms_devices = [
-        d for d in device_list
-        if str(d.get("deviceSn", "")).endswith(_BMS_SUFFIXES)
-    ]
-    # Fallback: alle Geräte wenn kein BMS-Suffix gefunden
-    return bms_devices if bms_devices else device_list
+    """Wählt die einrichtbaren Geräte aus der Account-Liste (storage/list).
+
+    - Mit BMS/BDU-Suffix: ein Eintrag pro physischem Gerät (wie bisher).
+    - Ohne ein einziges Suffix-Gerät: alle Geräte (wie bisher).
+    - Zusätzlich bleiben eigenständige Geräte OHNE Suffix erhalten (z.B. Tower Pro TP19
+      oder Stack100 mit numerischer SN neben einem Tower T17 mit -BDU).
+      Dafür muss ein Gerät eindeutig NICHT zu einem BMS/BDU-Eintrag gehören:
+      eigene, nicht leere collectorSn, die kein BMS/BDU-Gerät nutzt, und eine SN,
+      die nicht die Basis-SN eines BMS/BDU-Eintrags ist.
+    Die Reihenfolge der API-Liste bleibt erhalten.
+    """
+    def _sn(d) -> str:
+        return str(d.get("deviceSn") or "")
+
+    bms_devices = [d for d in device_list if _sn(d).endswith(_BMS_SUFFIXES)]
+    if not bms_devices:
+        return device_list
+
+    bms_base_sns = {
+        _sn(d)[:-len(suffix)]
+        for d in bms_devices
+        for suffix in _BMS_SUFFIXES
+        if _sn(d).endswith(suffix)
+    }
+    bms_dongles = {str(d["collectorSn"]) for d in bms_devices if d.get("collectorSn")}
+
+    def _is_standalone(d) -> bool:
+        sn, dongle = _sn(d), str(d.get("collectorSn") or "")
+        return bool(sn) and sn not in bms_base_sns and bool(dongle) and dongle not in bms_dongles
+
+    return [d for d in device_list if _sn(d).endswith(_BMS_SUFFIXES) or _is_standalone(d)]
 
 
 # ── Options: Alarm-Delay ─────────────────────────────────────────────────────
