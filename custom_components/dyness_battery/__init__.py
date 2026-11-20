@@ -2175,6 +2175,54 @@ class DynessDataCoordinator(DataUpdateCoordinator):
                             if dl is not None and dl > 0:
                                 data["dischargeCurrentLimit"] = dl
 
+                            # PowerBox G2 Variante A: der Master liefert keine Einzelzellen.
+                            # Bei genau einem Sub-Modul (SUB) dieses direkt abfragen —
+                            # gleiche Logik wie PowerBrick (Points 10300–11800).
+                            if self._single_sub_sn:
+                                _g2_sub = self._single_sub_sn
+                                try:
+                                    # Sub-Modul einmalig binden (sonst Code 500 "not bound"),
+                                    # wie in der Multi-Modul-Schleife
+                                    if _g2_sub not in self._bound_sns:
+                                        _g2_bind = await self._call(
+                                            session, "/v1/device/bindSn",
+                                            {"deviceSn": _g2_sub}
+                                        )
+                                        _LOGGER.debug(
+                                            "Dyness PowerBox G2 Sub-Modul %s bindSn: %s",
+                                            _g2_sub, _g2_bind,
+                                        )
+                                        self._bound_sns.add(_g2_sub)
+                                    _g2_res = await self._call(
+                                        session, "/v1/device/realTime/data",
+                                        {"deviceSn": _g2_sub}
+                                    )
+                                    if _is_success(_g2_res):
+                                        _g2_pts = {
+                                            p["pointId"]: p.get("pointValue", "")
+                                            for p in (_g2_res.get("data") or [])
+                                            if p.get("pointId")
+                                        }
+                                        _g2_cells = 0
+                                        for i in range(1, 17):
+                                            v = _to_float(_g2_pts.get(str(10200 + i * 100)))
+                                            if v is not None and v > 0:
+                                                data[f"cellVoltage{i:02d}"] = v
+                                                _g2_cells += 1
+                                        _LOGGER.debug(
+                                            "Dyness PowerBox G2 Sub-Modul %s: %d Punkte, %d Zellen",
+                                            _g2_sub, len(_g2_pts), _g2_cells,
+                                        )
+                                    else:
+                                        _LOGGER.debug(
+                                            "Dyness PowerBox G2 Sub-Modul %s: Code %s – %s",
+                                            _g2_sub, _g2_res.get("code"), _g2_res.get("info"),
+                                        )
+                                except Exception as _e_g2:
+                                    _LOGGER.debug(
+                                        "Dyness PowerBox G2: Sub-Modul-Abruf fehlgeschlagen: %s", _e_g2
+                                    )
+
                         else:
                             # Variante B: 10xxx-Serie
                             data["packVoltage"] = rt.get("13500") if rt.get("13500") is not None else data.get("packVoltage")
